@@ -17,7 +17,17 @@ RAGbot is a lightweight Retrieval-Augmented Generation (RAG) assistant designed 
 Make sure pgvector is installed on your PostgreSQL server:
 CREATE EXTENSION IF NOT EXISTS vector;
 
-2. Configure Environment
+Once you have your vectordb setup make sure to index it to improve performance.
+
+vectordb=# ALTER TABLE langchain_pg_embedding
+vectordb-# ALTER COLUMN embedding TYPE vector(384);
+ALTER TABLE
+vectordb=# CREATE INDEX ON langchain_pg_embedding
+USING ivfflat (embedding vector_cosine_ops)
+WITH (lists = 100);
+CREATE INDEX
+
+3. Configure Environment
 Edit rag/config.py to set:
 DB_NAME = "your_db"
 DB_USER = "your_user"
@@ -26,7 +36,7 @@ DB_HOST = "localhost"
 DB_PORT = "5432"
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"  # or your preferred SentenceTransformer
 
-3. Run the Assistant
+4. Run the Assistant
 python main.py
 You’ll be prompted to enter a proposal topic. The app will fetch relevant chunks, build a prompt, and (optionally) pass it to your LLM for response generation.
 
