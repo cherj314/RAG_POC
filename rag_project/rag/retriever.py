@@ -10,20 +10,21 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from rag.config import *
 
 # Initialize the embedding model
-embed_model = SentenceTransformer(EMBEDDING_MODEL)
+embed_model = None
+
+def get_embed_model():
+    global embed_model
+    if embed_model is None:
+        embed_model = SentenceTransformer(EMBEDDING_MODEL)
+    return embed_model
 
 def search_postgres(query, k=5, similarity_threshold=0.7):
     # Generate the embedding for the query
-    embedding = embed_model.encode(query)
+    model = get_embed_model() # Get the model only when needed
+    embedding = model.encode(query)
     
     # Connect to the PostgreSQL database
-    conn = psycopg2.connect(
-        dbname=DB_NAME,
-        user=DB_USER,
-        password=DB_PASSWORD,
-        host=DB_HOST,
-        port=DB_PORT
-    )
+    conn = get_db_connection()
 
     cur = conn.cursor()
 
@@ -33,7 +34,7 @@ def search_postgres(query, k=5, similarity_threshold=0.7):
         WHERE name = %s;
     """, (COLLECTION_NAME,))
 
-    collection_id = cur.fetchone()[0]
+    collection_id = get_collection_id(conn)
 
     # Use proper cosine similarity - the <=> operator returns distance, not similarity
     # Lower distance values mean higher similarity
@@ -54,6 +55,6 @@ def search_postgres(query, k=5, similarity_threshold=0.7):
             results.append((doc, metadata, similarity_score))
     
     # Close the database connection
-    conn.close()
+    release_connection(conn)
 
     return results
