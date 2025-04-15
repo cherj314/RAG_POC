@@ -2,8 +2,11 @@
 RAGbot is a lightweight Retrieval-Augmented Generation (RAG) assistant designed to generate software proposals using historical scopes of work stored in a PostgreSQL vector database.
 
 📦 Features
+
 🔍 Context-Aware Retrieval: Uses pgvector to search relevant past documents based on semantic similarity.
+
 🧱 Modular Design: Clean separation between retrieval, prompt construction, and generation.
+
 🤖 Generative AI Ready: Easily extendable to plug into a local LLM like LLaMA or any API-based model.
 
 ⚙️ Setup
