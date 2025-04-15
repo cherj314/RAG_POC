@@ -28,6 +28,9 @@ python main.py
 You’ll be prompted to enter a proposal topic. The app will fetch relevant chunks, build a prompt, and (optionally) pass it to your LLM for response generation.
 
 🔮 Coming Soon
+
 🔌 LLaMA/llama.cpp integration
+
 📤 Response generation using the retrieved context
+
 🧪 CLI interface for interactive use using openwebUI
