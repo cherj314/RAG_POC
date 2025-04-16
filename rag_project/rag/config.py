@@ -1,22 +1,27 @@
+import os
+from dotenv import load_dotenv
 from psycopg2.pool import SimpleConnectionPool
 
-# Database
-DB_HOST = "localhost"
-DB_PORT = 5432
-DB_NAME = "vectordb"
-DB_USER = "myuser"
-DB_PASSWORD = "mypassword"
+# Load environment variables from .env file
+load_dotenv()
+
+# Database config from environment variables
+DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_PORT = int(os.getenv("DB_PORT", "5432"))
+DB_NAME = os.getenv("DB_NAME", "vectordb")
+DB_USER = os.getenv("DB_USER", "myuser")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "mypassword")
 
 # Vector DB
-COLLECTION_NAME = "document_chunks"
+COLLECTION_NAME = os.getenv("COLLECTION_NAME", "document_chunks")
 COLLECTION_ID = None
 
 # Embedding Model
-EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 
 # Chunking
-CHUNK_SIZE = 400
-CHUNK_OVERLAP = 50
+CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "400"))
+CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "50"))
 
 # Initialize pool at startup
 DB_POOL = None

@@ -1,24 +1,29 @@
 import os
+import sys
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import TextLoader
 from langchain_community.vectorstores.pgvector import PGVector
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from sqlalchemy import create_engine, text
-import sys
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from dotenv import load_dotenv
 
-from rag.config import (
-    DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD,
-    EMBEDDING_MODEL, CHUNK_SIZE, CHUNK_OVERLAP
-)
+# Load environment variables
+load_dotenv()
+
+# Get configuration directly from .env
+DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_PORT = int(os.getenv("DB_PORT", "5432"))
+DB_NAME = os.getenv("DB_NAME", "vectordb")
+DB_USER = os.getenv("DB_USER", "myuser")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "mypassword")
+COLLECTION_NAME = os.getenv("COLLECTION_NAME", "document_chunks")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "400"))
+CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "50"))
+DOCS_DIR = os.getenv("DOCS_DIR", "Documents")  # Get docs directory from env or use default
 
 # Configuration
 CONNECTION_STRING = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-COLLECTION_NAME = "document_chunks"
-EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L3-v2"
-CHUNK_SIZE = 400
-CHUNK_OVERLAP = 50
-DOCS_DIR = "C:/Users/JohnChernoff/OneDrive - Arcurve/Desktop/RAGbot/Documents"  # Directory containing text files
 
 # Initialize embedding model
 embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
