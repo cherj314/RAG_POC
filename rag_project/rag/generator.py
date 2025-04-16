@@ -1,42 +1,49 @@
 import os
 import subprocess
-import tempfile
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
 
-# Get llama cli and model paths from environment
+# Get llama CLI and model paths from environment
 LLAMA_CLI_PATH = os.getenv("LLAMA_CLI_PATH", "llama-cli.exe")
 LLAMA_MODEL_PATH = os.getenv("LLAMA_MODEL_PATH", "path/to/model.gguf")
 
 def generate_response(prompt, max_tokens=512):
     """
-    Generate a response using llama-cli.exe from the command line
+    Generate a response using llama-cli from the command line.
+    
+    Args:
+        prompt (str): The input prompt for the LLM
+        max_tokens (int): Maximum number of tokens to generate
+        
+    Returns:
+        str: The generated response
     """
     try:
-        # Create a command to run llama-cli with the prompt
+        # Build command for llama-cli
         cmd = [
             LLAMA_CLI_PATH,
             "-m", LLAMA_MODEL_PATH,
-            "-n", str(max_tokens),  # Number of tokens to generate
-            "-p", prompt  # The prompt
+            "-n", str(max_tokens),
+            "-p", prompt
         ]
         
         # Run the command and capture output
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
         
-        # The output will include the prompt as well, so we need to extract just the response
-        # This is a simplistic way to separate the response - you might need to adjust this
+        # Extract just the response (remove the prompt from output)
         output = result.stdout
         response = output.split(prompt, 1)[-1].strip()
         
         return response
-    
+        
     except subprocess.CalledProcessError as e:
-        print(f"Error running llama-cli: {e}")
-        print(f"stderr: {e.stderr}")
+        error_msg = f"Error running llama-cli: {e}\nStderr: {e.stderr}"
+        print(error_msg)
         return f"Error generating response: {str(e)}"
+        
     except Exception as e:
-        print(f"Unexpected error: {e}")
+        error_msg = f"Unexpected error: {e}"
+        print(error_msg)
         return f"Error generating response: {str(e)}"
