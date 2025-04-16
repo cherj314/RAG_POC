@@ -15,7 +15,7 @@ from rag.config import (
 # Configuration
 CONNECTION_STRING = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 COLLECTION_NAME = "document_chunks"
-EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L3-v2"
 CHUNK_SIZE = 400
 CHUNK_OVERLAP = 50
 DOCS_DIR = "C:/Users/JohnChernoff/OneDrive - Arcurve/Desktop/RAGbot/Documents"  # Directory containing text files
