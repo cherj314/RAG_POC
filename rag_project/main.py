@@ -40,6 +40,7 @@ def generate_proposal(user_input):
     """
     from rag.retriever import search_postgres
     from rag.prompt_builder import build_prompt
+    from rag.generator import generate_response  # Import the generator function
     
     # Record start time for performance monitoring
     start_time = time.time()
@@ -72,24 +73,17 @@ def generate_proposal(user_input):
     print("\n🧠 Prompt Preview:\n")
     print(f"{prompt[:500]}...\n")
     
-    # Step 5: Generate response (uncomment when ready to use an LLM)
-    # from rag.generator import generate_response
-    # generation_start = time.time()
-    # response = generate_response(prompt)
-    # generation_time = time.time() - generation_start
-    # print(f"\n✅ Response generated in {generation_time:.2f}s\n")
-    # print(response)
-    # total_time = time.time() - start_time
-    # print(f"\n⏱️ Total process completed in {total_time:.2f}s")
-    # return response
+    # Step 5: Generate response using GPT-4o
+    print("\n🧠 Generating proposal with GPT-4o...\n")
+    generation_start = time.time()
+    response = generate_response(prompt)
+    generation_time = time.time() - generation_start
+    print(f"\n✅ Response generated in {generation_time:.2f}s\n")
+    print(response)
     
-    # Temporary placeholder until LLM integration is complete
     total_time = time.time() - start_time
-    print(f"\n⏱️ Process completed in {total_time:.2f}s (Search: {search_time:.2f}s, Prompt building: {prompt_time:.2f}s)")
-    print("\nLLM integration is currently disabled. To enable generation:")
-    print("1. Configure your LLM in .env")
-    print("2. Uncomment the generation code in main.py")
-    return None
+    print(f"\n⏱️ Total process completed in {total_time:.2f}s")
+    return response
 
 def run_interactive():
     """Run the RAGbot in interactive mode"""
