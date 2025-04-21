@@ -1,0 +1,68 @@
+version: '3.8'
+
+services:
+  postgres:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-myuser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mypassword}
+      POSTGRES_DB: ${POSTGRES_DB:-vectordb}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-myuser} -d ${POSTGRES_DB:-vectordb}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ragbot-network
+
+  ragbot-api:
+    build:
+      context: .
+      dockerfile: Dockerfile-api
+    ports:
+      - "8000:8000"
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=${POSTGRES_DB:-vectordb}
+      - DB_USER=${POSTGRES_USER:-myuser}
+      - DB_PASSWORD=${POSTGRES_PASSWORD:-mypassword}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - .:/app
+    networks:
+      - ragbot-network
+
+  openwebui:
+    image: ghcr.io/open-webui/open-webui:main
+    ports:
+      - "3000:8080"
+    environment:
+      - WEBUI_AUTH_TOKEN=${WEBUI_AUTH_TOKEN:-default_token}
+      - CUSTOM_API_KEY=${OPENAI_API_KEY}
+      - CUSTOM_API_BASE_URL=http://host.docker.internal:8000
+      - CUSTOM_API_CONTEXT_SIZE=4096
+      - API_BACKEND=custom
+    volumes:
+      - openwebui-data:/app/backend/data
+    depends_on:
+      - ragbot-api
+    networks:
+      - ragbot-network
+
+networks:
+  ragbot-network:
+    driver: bridge
+
+volumes:
+  pgdata:
+  openwebui-data:
