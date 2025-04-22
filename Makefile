@@ -17,6 +17,10 @@ help:
 	@echo "reset-data - Reset only the database content without rebuilding containers"
 	@echo "clean    - Remove all containers and volumes (CAUTION: data loss)"
 	@echo "help     - Show this help message"
+	@echo ""
+	@echo "Windows users can also use:"
+	@echo "run-ragbot.bat - Start the system (bypasses PowerShell execution policy)"
+	@echo "reset-ragbot.bat - Reset the system (bypasses PowerShell execution policy)"
 
 # Setup environment
 setup:
@@ -24,15 +28,20 @@ setup:
 
 # Start all containers
 start:
+	@powershell -File .\check-docker.ps1 || (echo "Docker is not running, please start it first" && exit 1)
 	docker compose up -d
 	@echo "Services starting..."
+	@powershell -Command "Start-Sleep -Seconds 5"
+	@powershell -File .\setup-openwebui.ps1
 	@echo "Web interface will be available at http://localhost:3000"
 
 # Start with verbose output
 start-verbose:
+	@powershell -File .\check-docker.ps1 || (echo "Docker is not running, please start it first" && exit 1)
 	@echo "Starting RAGbot with verbose output..."
 	@chmod +x ./startup.sh
 	./startup.sh
+	@powershell -File .\setup-openwebui.ps1
 
 # Stop all containers
 stop:
