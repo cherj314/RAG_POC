@@ -1,7 +1,6 @@
-from sentence_transformers import SentenceTransformer
 import sys
 import os
-import time
+from sentence_transformers import SentenceTransformer
 
 # Add the parent directory to sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))

@@ -23,6 +23,7 @@ A lightweight Retrieval-Augmented Generation system for creating customized soft
 3. **Access the web interface**
    - Open http://localhost:3000
    - Use the default token from your .env file
+   - Change api connection to use http://localhost:8000 
 
 ## Core Features
 

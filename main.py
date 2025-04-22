@@ -1,7 +1,6 @@
-from dotenv import load_dotenv
-import time
 import atexit
 import sys
+from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()

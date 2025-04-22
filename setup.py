@@ -2,9 +2,7 @@
 """RAGbot Setup Script"""
 
 import os
-import sys
 import subprocess
-import shutil
 from pathlib import Path
 import platform
 import re
