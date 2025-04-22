@@ -53,3 +53,10 @@ A lightweight Retrieval-Augmented Generation system for creating customized soft
 - Sentence Transformers for embeddings
 - OpenAI API for generation
 - FastAPI for web server
+
+## Whats next?
+
+- Add PDF ingestion capability
+- Add other file type ingestion (xls, json)
+- Improve retrieval capabilities and customization
+- Improve containerization - goal is 1 click deploy anywhere.
