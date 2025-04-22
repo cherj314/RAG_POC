@@ -58,6 +58,7 @@ A lightweight Retrieval-Augmented Generation system for creating customized soft
 
 - Add PDF ingestion capability
 - Add other file type ingestion (xls, json)
+- Increase vectordb scalability and retrieval speed
 - Improve retrieval capabilities and customization
 - Improve containerization - goal is 1 click deploy anywhere.
 - Restore CLI functionality and expose backend of vector db for testing / tuning
