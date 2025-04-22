@@ -26,48 +26,20 @@ CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "400"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "50"))
 DOCS_DIR = os.getenv("DOCS_DIR", "Documents")
 
-# Maximum workers for parallel processing
-MAX_WORKERS = 4
-
 # Database connection string
 CONNECTION_STRING = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+MAX_WORKERS = 4
 
 def setup_database():
-    """
-    Set up the PostgreSQL database with pgvector extension and required tables.
-    """
-    print("🔄 Setting up database...")
-    start_time = time.time()
-    
+    """Set up the PostgreSQL database with pgvector extension."""
     engine = create_engine(CONNECTION_STRING)
     with engine.connect() as connection:
         # Enable pgvector extension
         connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-        
-        # Create document_chunks table if needed
-        connection.execute(text("""
-            CREATE TABLE IF NOT EXISTS document_chunks (
-                id SERIAL PRIMARY KEY,
-                content TEXT,
-                metadata JSONB,
-                embedding vector(384)  -- Dimensionality based on the embedding model
-            );
-        """))
-        
         connection.commit()
-        
-    print(f"✅ Database setup complete in {time.time() - start_time:.2f}s")
 
 def process_document(file_path):
-    """
-    Process a single document file, extract metadata, and split into chunks.
-    
-    Args:
-        file_path (str): Path to the document file
-        
-    Returns:
-        list: List of document chunks with metadata
-    """
+    """Process a single document file, extract metadata, and split into chunks."""
     try:
         # Extract metadata from file path
         file_name = os.path.basename(file_path)
@@ -92,22 +64,17 @@ def process_document(file_path):
         
         return chunks
     except Exception as e:
-        print(f"❌ Error processing {file_path}: {str(e)}")
+        print(f"Error processing {file_path}: {str(e)}")
         return []
 
 def find_documents():
     """Find all document files to be processed"""
     if not os.path.exists(DOCS_DIR):
-        print(f"❌ Error: Documents directory '{DOCS_DIR}' not found")
+        print(f"Error: Documents directory '{DOCS_DIR}' not found")
         return []
         
     # Find all text files in the docs directory
     doc_files = glob.glob(os.path.join(DOCS_DIR, "*.txt"))
-    
-    # Add support for more file types if needed
-    # doc_files += glob.glob(os.path.join(DOCS_DIR, "*.md"))
-    # doc_files += glob.glob(os.path.join(DOCS_DIR, "*.pdf"))
-    
     return doc_files
 
 def process_documents_in_parallel(doc_files):
@@ -115,16 +82,15 @@ def process_documents_in_parallel(doc_files):
     all_chunks = []
     
     if not doc_files:
-        print("❌ No documents found for processing")
+        print("No documents found for processing")
         return all_chunks
         
-    print(f"🔄 Processing {len(doc_files)} documents in parallel...")
-    start_time = time.time()
+    print(f"Processing {len(doc_files)} documents in parallel...")
     
     with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        # Submit processing jobs and create a future-to-filename mapping
+        # Submit processing jobs
         future_to_file = {executor.submit(process_document, file_path): file_path 
-                        for file_path in doc_files}
+                          for file_path in doc_files}
         
         # Process as they complete
         for future in tqdm(concurrent.futures.as_completed(future_to_file), 
@@ -135,22 +101,17 @@ def process_documents_in_parallel(doc_files):
                 chunks = future.result()
                 if chunks:
                     all_chunks.extend(chunks)
-                    print(f"  ✅ {os.path.basename(file_path)}: {len(chunks)} chunks")
+                    print(f"  ✓ {os.path.basename(file_path)}: {len(chunks)} chunks")
                 else:
-                    print(f"  ⚠️ {os.path.basename(file_path)}: No chunks extracted")
+                    print(f"  ! {os.path.basename(file_path)}: No chunks extracted")
             except Exception as e:
-                print(f"  ❌ {os.path.basename(file_path)}: Error - {str(e)}")
+                print(f"  X {os.path.basename(file_path)}: Error - {str(e)}")
     
-    print(f"✅ Document processing complete in {time.time() - start_time:.2f}s")
     return all_chunks
 
 def run_pipeline():
-    """
-    Main ingestion pipeline: setup database, process documents,
-    generate embeddings, and store in vector database.
-    """
-    total_start_time = time.time()
-    print("🚀 Starting document ingestion pipeline")
+    """Main ingestion pipeline"""
+    print("Starting document ingestion pipeline")
     
     # Setup database
     setup_database()
@@ -162,22 +123,19 @@ def run_pipeline():
     all_chunks = process_documents_in_parallel(doc_files)
     
     if not all_chunks:
-        print("⚠️ No chunks were generated. Check your documents and processing settings.")
+        print("No chunks were generated. Check your documents and processing settings.")
         return
         
     # Initialize embedding model
-    print(f"🔄 Initializing embedding model: {EMBEDDING_MODEL}")
-    embedding_start = time.time()
+    print(f"Initializing embedding model: {EMBEDDING_MODEL}")
     embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
-    print(f"✅ Embedding model loaded in {time.time() - embedding_start:.2f}s")
     
     # Store chunks in vector database
-    print(f"🔄 Storing {len(all_chunks)} chunks in vector database...")
-    db_start_time = time.time()
+    print(f"Storing {len(all_chunks)} chunks in vector database...")
     
     try:
         # Initialize PGVector with embeddings model and connection details
-        db = PGVector.from_documents(
+        PGVector.from_documents(
             documents=all_chunks,
             embedding=embeddings,
             collection_name=COLLECTION_NAME,
@@ -185,17 +143,13 @@ def run_pipeline():
             pre_delete_collection=True  # Set to False to append instead of replace
         )
         
-        db_time = time.time() - db_start_time
-        total_time = time.time() - total_start_time
-        
-        print(f"✅ Successfully stored {len(all_chunks)} chunks with embeddings in {db_time:.2f}s")
-        print(f"✅ Total ingestion pipeline completed in {total_time:.2f}s")
+        print(f"Successfully stored {len(all_chunks)} chunks with embeddings")
         
     except Exception as e:
-        print(f"❌ Error storing vectors in database: {e}")
+        print(f"Error storing vectors in database: {e}")
 
 if __name__ == "__main__":
-    # Add retry logic for container environments where the database might not be ready
+    # Add retry logic for container environments
     max_retries = 5
     retry_delay = 3  # seconds
     
@@ -205,9 +159,9 @@ if __name__ == "__main__":
             break
         except Exception as e:
             if "could not connect to server" in str(e).lower() and attempt < max_retries - 1:
-                print(f"⚠️ Database connection failed. Retrying in {retry_delay}s... ({attempt+1}/{max_retries})")
+                print(f"Database connection failed. Retrying in {retry_delay}s... ({attempt+1}/{max_retries})")
                 time.sleep(retry_delay)
                 retry_delay *= 1.5  # Exponential backoff
             else:
-                print(f"❌ Fatal error: {e}")
+                print(f"Fatal error: {e}")
                 sys.exit(1)

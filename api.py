@@ -1,16 +1,16 @@
 import sys
 import os
 from typing import List, Dict, Any, Optional
-from fastapi import FastAPI, HTTPException, Request, Depends
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import uvicorn
 import time
 import json
 import asyncio
-import traceback
 
-# Add parent directory to path to import project modules
+# Add parent directory to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Import project modules
@@ -25,7 +25,7 @@ app = FastAPI(title="RAGbot API", description="API for the RAG-based proposal ge
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # For production, restrict this to specific origins
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -33,26 +33,6 @@ app.add_middleware(
 
 # Global flag to track initialization status
 is_initialized = False
-
-# Initialize database pool on startup
-@app.on_event("startup")
-async def startup_event():
-    global is_initialized
-    try:
-        print("🚀 Starting RAGbot API service...")
-        # Initialize database pool
-        init_db_pool()
-        print("✅ Database connection pool initialized")
-        
-        # Pre-load embedding model
-        model = get_embed_model()
-        print(f"✅ Embedding model loaded: {model is not None}")
-        
-        is_initialized = True
-        print("✅ RAGbot API initialization complete")
-    except Exception as e:
-        print(f"❌ Error during startup: {str(e)}")
-        print(f"Traceback: {traceback.format_exc()}")
 
 # Define request and response models
 class ProposalRequest(BaseModel):
@@ -71,16 +51,21 @@ class ChatRequest(BaseModel):
     temperature: Optional[float] = 0.7
     max_tokens: Optional[int] = 2048
     
-class ChatResponse(BaseModel):
-    id: str
-    model: str
-    created: int
-    choices: List[Dict[str, Any]]
-
 class RetrievedChunk(BaseModel):
     content: str
     source: Optional[str] = None
     score: float
+
+# Initialize database pool on startup
+@app.on_event("startup")
+async def startup_event():
+    global is_initialized
+    try:
+        init_db_pool()
+        get_embed_model()
+        is_initialized = True
+    except Exception as e:
+        print(f"Error during startup: {str(e)}")
 
 # Ensure components are initialized
 def ensure_initialized():
@@ -88,32 +73,20 @@ def ensure_initialized():
     global is_initialized
     
     if not is_initialized:
-        print("⚠️ Components not initialized during startup, initializing now...")
         try:
-            # Initialize database pool
             init_db_pool()
-            print("✅ Database connection pool initialized")
-            
-            # Pre-load embedding model
-            model = get_embed_model()
-            print(f"✅ Embedding model loaded: {model is not None}")
-            
+            get_embed_model()
             is_initialized = True
-            print("✅ Manual initialization complete")
         except Exception as e:
-            print(f"❌ Error during manual initialization: {str(e)}")
-            print(f"Traceback: {traceback.format_exc()}")
             raise HTTPException(status_code=500, detail="Failed to initialize components")
 
 # Routes
 @app.post("/api/generate-proposal")
 async def generate_proposal(request: ProposalRequest):
     try:
-        # Ensure components are initialized
         ensure_initialized()
         
         # Step 1: Retrieve relevant chunks
-        print(f"🔍 Searching for content relevant to: {request.query}")
         chunks = search_postgres(
             request.query,
             k=request.max_chunks,
@@ -121,27 +94,18 @@ async def generate_proposal(request: ProposalRequest):
         )
         
         if not chunks:
-            print("⚠️ No relevant content found for the query.")
             return {
                 "success": False,
                 "message": "No relevant content found for the query."
             }
         
-        print(f"✅ Found {len(chunks)} relevant chunks")
-        for i, (doc, metadata, score) in enumerate(chunks, 1):
-            src = metadata.get("file_name", "Unknown") if metadata else "Unknown"
-            print(f"  Chunk {i}: {src} (score: {score:.4f})")
-        
         # Step 2: Build prompt
         prompt = build_prompt(chunks, request.query)
-        print(f"✅ Built prompt with {len(chunks)} chunks")
         
         # Step 3: Generate response
         start_time = time.time()
-        print("🧠 Generating response...")
         response = generate_response(prompt)
         generation_time = time.time() - start_time
-        print(f"✅ Response generated in {generation_time:.2f}s")
         
         # Step 4: Format retrieved chunks for response
         retrieved_chunks = []
@@ -163,35 +127,18 @@ async def generate_proposal(request: ProposalRequest):
             }
         }
     except Exception as e:
-        print(f"❌ Error generating proposal: {str(e)}")
-        print(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Error generating proposal: {str(e)}")
 
 @app.post("/chat/completions")
 async def chat_completions_no_prefix(request: ChatRequest, raw_request: Request):
-    """
-    OpenAI-compatible chat completions endpoint (without /api prefix)
-    """
+    """OpenAI-compatible chat completions endpoint (without /api prefix)"""
     return await chat_completions(request, raw_request)
 
 @app.post("/api/chat/completions")
 async def chat_completions(request: ChatRequest, raw_request: Request):
-    """
-    OpenAI-compatible chat completions endpoint for OpenWebUI integration
-    """
+    """OpenAI-compatible chat completions endpoint for OpenWebUI integration"""
     try:
-        # Ensure components are initialized
         ensure_initialized()
-        
-        # Extract all messages for context
-        print("\n==== CHAT REQUEST RECEIVED ====")
-        print(f"Model: {request.model}, Temperature: {request.temperature}, Max tokens: {request.max_tokens}")
-        
-        # Debug: Print all messages
-        print(f"Messages in request: {len(request.messages)}")
-        for i, msg in enumerate(request.messages):
-            preview = msg.content[:50] + "..." if len(msg.content) > 50 else msg.content
-            print(f"  Message {i+1}: {msg.role} - {preview}")
         
         # Extract the last user message as our query
         last_user_message = None
@@ -201,43 +148,21 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
                 break
         
         if not last_user_message:
-            error_msg = "No user message found in the request"
-            print(f"❌ Error: {error_msg}")
-            raise HTTPException(status_code=400, detail=error_msg)
-        
-        print(f"🔍 Query for RAG: \"{last_user_message}\"")
+            raise HTTPException(status_code=400, detail="No user message found in the request")
         
         # Process the query using our RAG pipeline
-        print("🔍 Searching for relevant content...")
-        search_start = time.time()
         chunks = search_postgres(
             last_user_message,
             k=5,
             similarity_threshold=0.5
         )
-        search_time = time.time() - search_start
-        
-        # Log retrieved chunks
-        if chunks:
-            print(f"✅ Found {len(chunks)} relevant chunks in {search_time:.2f}s")
-            for i, (doc, metadata, score) in enumerate(chunks, 1):
-                src = metadata.get("file_name", "Unknown") if metadata else "Unknown"
-                preview = doc[:100] + "..." if len(doc) > 100 else doc
-                print(f"  Chunk {i}: {src} (score: {score:.4f})")
-                print(f"    Preview: {preview}")
-        else:
-            print("⚠️ No relevant chunks found, falling back to base knowledge")
         
         # Build the prompt and generate a response
         if chunks:
-            print("🧠 Building prompt with retrieved context...")
             prompt = build_prompt(chunks, last_user_message)
-            
-            print("🧠 Generating response with context from retrieved chunks...")
             generated_text = generate_response(prompt, max_tokens=request.max_tokens)
         else:
-            # Don't generate a response, instead return a message about no relevant content
-            print("⚠️ No relevant chunks found, informing user")
+            # No relevant chunks found
             generated_text = (
                 "I'm sorry, but I couldn't find any relevant information in my knowledge base "
                 "about your query. Could you please rephrase your question or ask about something "
@@ -267,25 +192,14 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
             }
         }
         
-        print(f"✅ Response generated successfully ({len(generated_text.split())} tokens)")
-        response_preview = generated_text[:100] + "..." if len(generated_text) > 100 else generated_text
-        print(f"  Preview: {response_preview}")
-        print("==== REQUEST COMPLETE ====\n")
-        
         # If streaming is requested
         if request.stream:
-            print("Streaming response requested")
             return StreamingResponse(stream_response(generated_text))
         
         return response
     
     except Exception as e:
-        # Detailed error logging
-        error_msg = f"Error in chat completion: {str(e)}"
-        print(f"❌ ERROR: {error_msg}")
-        print(f"Traceback: {traceback.format_exc()}")
-        
-        # Return a proper error response that OpenWebUI can understand
+        # Return a proper error response
         response = {
             "id": f"chatcmpl-error-{int(time.time())}",
             "object": "chat.completion",
@@ -344,12 +258,10 @@ async def stream_response(content: str):
             ]
         }
         yield f"data: {json.dumps(data)}\n\n"
-        await asyncio.sleep(0.05)  # Small delay to simulate typing
+        await asyncio.sleep(0.05)
     
     # End the stream
     yield "data: [DONE]\n\n"
-
-from fastapi.responses import StreamingResponse
 
 @app.get("/models")
 async def list_models_no_prefix():
@@ -377,7 +289,6 @@ async def list_models():
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint"""
-    # Check if the database pool is initialized
     from rag.config import DB_POOL
     
     health_status = {

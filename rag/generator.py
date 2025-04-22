@@ -1,20 +1,16 @@
 import os
-import time
 from dotenv import load_dotenv
 import openai
 
 # Load environment variables
 load_dotenv()
 
-# Get OpenAI API key from environment
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-
 # Configure OpenAI client
-openai.api_key = OPENAI_API_KEY
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
 def generate_response(prompt, max_tokens=2048, model="gpt-4o"):
     """
-    Generate a response using OpenAI's GPT-4o model.
+    Generate a response using OpenAI's model.
     
     Args:
         prompt (str): The input prompt for the LLM
@@ -24,16 +20,7 @@ def generate_response(prompt, max_tokens=2048, model="gpt-4o"):
     Returns:
         str: The generated response
     """
-    # Provide an estimate of generation time
-    print(f"⏱️ Estimated generation time: 5-15 seconds (depending on API load)")
-    
     try:
-        # Start timing
-        start_time = time.time()
-        
-        print("🧠 Starting GPT-4o generation...")
-        
-        # Call OpenAI API
         response = openai.chat.completions.create(
             model=model,
             messages=[
@@ -44,18 +31,7 @@ def generate_response(prompt, max_tokens=2048, model="gpt-4o"):
             temperature=0.7,
         )
         
-        # Extract response content
-        generated_text = response.choices[0].message.content.strip()
-        
-        # Calculate elapsed time
-        end_time = time.time()
-        elapsed = end_time - start_time
-            
-        print(f"✅ Generation completed in {elapsed:.2f}s")
-        
-        return generated_text
+        return response.choices[0].message.content.strip()
         
     except Exception as e:
-        error_msg = f"Unexpected error: {e}"
-        print(f"❌ {error_msg}")
         return f"Error generating response: {str(e)}"

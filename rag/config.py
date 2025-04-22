@@ -14,7 +14,7 @@ DB_PASSWORD = os.getenv("DB_PASSWORD", "mypassword")
 
 # Vector DB configuration
 COLLECTION_NAME = os.getenv("COLLECTION_NAME", "document_chunks")
-COLLECTION_ID = None  # Will be populated on first database connection
+COLLECTION_ID = None
 
 # Embedding Model configuration
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
@@ -23,65 +23,39 @@ EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "400"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "50"))
 
-# Database connection pool (initialized on first request)
+# Database connection pool
 DB_POOL = None
-
-# Performance settings
 DB_MIN_CONNECTIONS = 2
 DB_MAX_CONNECTIONS = 10
-CACHE_TTL = 3600  # Cache time-to-live in seconds
 
 def init_db_pool():
-    """
-    Initialize the database connection pool.
-    """
+    """Initialize the database connection pool."""
     global DB_POOL
     if DB_POOL is None:
         DB_POOL = SimpleConnectionPool(
-            DB_MIN_CONNECTIONS, DB_MAX_CONNECTIONS,  # min, max connections
+            DB_MIN_CONNECTIONS, DB_MAX_CONNECTIONS,
             dbname=DB_NAME,
             user=DB_USER,
             password=DB_PASSWORD,
             host=DB_HOST,
             port=DB_PORT
         )
-        print(f"✅ Database connection pool initialized with {DB_MIN_CONNECTIONS}-{DB_MAX_CONNECTIONS} connections")
 
 def get_db_connection():
-    """
-    Get a connection from the connection pool.
-    Initializes the pool if it doesn't exist yet.
-    
-    Returns:
-        connection: PostgreSQL database connection
-    """
+    """Get a connection from the connection pool."""
     global DB_POOL
     if DB_POOL is None:
         init_db_pool()
     return DB_POOL.getconn()
 
 def release_connection(conn):
-    """
-    Return a connection to the connection pool.
-    
-    Args:
-        conn: The connection to release
-    """
+    """Return a connection to the connection pool."""
     global DB_POOL
     if DB_POOL is not None:
         DB_POOL.putconn(conn)
 
 def get_collection_id(conn):
-    """
-    Get the UUID of the vector collection.
-    Caches the result for subsequent calls.
-    
-    Args:
-        conn: Database connection
-        
-    Returns:
-        str: UUID of the collection
-    """
+    """Get the UUID of the vector collection."""
     global COLLECTION_ID
     if COLLECTION_ID is None:
         cur = conn.cursor()
@@ -92,6 +66,5 @@ def get_collection_id(conn):
         result = cur.fetchone()
         if result:
             COLLECTION_ID = result[0]
-            print(f"✅ Retrieved collection ID: {COLLECTION_ID}")
         cur.close()
     return COLLECTION_ID
