@@ -23,6 +23,7 @@ A lightweight Retrieval-Augmented Generation system for creating customized soft
 3. **Access the web interface**
    - Open http://localhost:3000
    - Use the default token from your .env file
+   - Change api connection to use http://localhost:8000 
 
 ## Core Features
 
@@ -52,3 +53,13 @@ A lightweight Retrieval-Augmented Generation system for creating customized soft
 - Sentence Transformers for embeddings
 - OpenAI API for generation
 - FastAPI for web server
+
+## Whats next?
+
+- Add PDF ingestion capability
+- Add other file type ingestion (xls, json)
+- Increase vectordb scalability and retrieval speed
+- Improve retrieval capabilities and customization
+- Improve containerization - goal is 1 click deploy anywhere.
+- Restore CLI functionality and expose backend of vector db for testing / tuning
+- Improve code structure, refactor main and setup into one file? Possible to get rid of Makefile and embed db-setup.sql in ingest.py?
