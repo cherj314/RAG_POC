@@ -18,9 +18,9 @@ help:
 	@echo "clean    - Remove all containers and volumes (CAUTION: data loss)"
 	@echo "help     - Show this help message"
 	@echo ""
-	@echo "Windows users can also use:"
-	@echo "run-ragbot.bat - Start the system (bypasses PowerShell execution policy)"
-	@echo "reset-ragbot.bat - Reset the system (bypasses PowerShell execution policy)"
+	@echo "Linux/WSL2 users can also use:"
+	@echo "./run-ragbot.sh - Start the system"
+	@echo "./reset-ragbot.sh - Reset the system"
 
 # Setup environment
 setup:
@@ -28,20 +28,18 @@ setup:
 
 # Start all containers
 start:
-	@powershell -File .\check-docker.ps1 || (echo "Docker is not running, please start it first" && exit 1)
+	@./check-docker.sh || (echo "Docker is not running, please start it first" && exit 1)
 	docker compose up -d
 	@echo "Services starting..."
-	@powershell -Command "Start-Sleep -Seconds 5"
-	@powershell -File .\setup-openwebui.ps1
+	@sleep 5
 	@echo "Web interface will be available at http://localhost:3000"
 
 # Start with verbose output
 start-verbose:
-	@powershell -File .\check-docker.ps1 || (echo "Docker is not running, please start it first" && exit 1)
+	@./check-docker.sh || (echo "Docker is not running, please start it first" && exit 1)
 	@echo "Starting RAGbot with verbose output..."
 	@chmod +x ./startup.sh
 	./startup.sh
-	@powershell -File .\setup-openwebui.ps1
 
 # Stop all containers
 stop:
@@ -76,14 +74,14 @@ reset:
 	@echo "Stopping all containers..."
 	docker compose down
 	@echo "Removing volumes..."
-	docker volume rm rag_poc_pgdata rag_poc_openwebui-data || true
+	docker volume rm ragbot_pgdata ragbot_openwebui-data || true
 	@echo "Pruning unused containers and networks..."
 	docker container prune -f
 	docker network prune -f
 	@echo "Starting clean system..."
 	docker compose up -d postgres
 	@echo "Waiting for PostgreSQL to initialize..."
-	powershell -Command "Start-Sleep -Seconds 10"
+	sleep 10
 	docker compose up -d
 	@echo "System has been reset and restarted!"
 

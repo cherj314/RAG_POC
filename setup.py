@@ -9,6 +9,8 @@ import re
 
 # Check if running on Windows
 IS_WINDOWS = platform.system() == "Windows"
+# Check if running on WSL
+IS_WSL = "microsoft-standard" in platform.uname().release.lower() if platform.system() == "Linux" else False
 
 def print_color(text, color):
     """Print colored text to the console."""
@@ -20,8 +22,8 @@ def print_color(text, color):
         "bold": "\033[1m",
         "end": "\033[0m"
     }
-    if IS_WINDOWS:
-        # Use plain print for Windows to avoid PowerShell issues
+    if IS_WINDOWS and not IS_WSL:
+        # Use plain print for Windows CMD to avoid PowerShell issues
         if color == "green":
             print(f"✓ {text}")
         elif color == "yellow":
@@ -33,7 +35,7 @@ def print_color(text, color):
         else:
             print(text)
     else:
-        # Use ANSI colors on Unix-like systems
+        # Use ANSI colors on Unix-like systems or Windows Terminal
         print(f"{colors.get(color, '')}{text}{colors['end']}")
 
 def run_command(command, shell=False):
@@ -60,7 +62,7 @@ def create_env_file():
         "POSTGRES_USER": "myuser",
         "POSTGRES_PASSWORD": "mypassword",
         "POSTGRES_DB": "vectordb",
-        "DB_HOST": "postgres",
+        "DB_HOST": "postgres",  # Use 'postgres' for Docker networking
         "DB_PORT": "5432",
         "DB_NAME": "vectordb",
         "DB_USER": "myuser",
@@ -125,15 +127,19 @@ def setup_docker_files():
     """Check and setup Docker files."""
     print_color("\nChecking Docker configuration...", "blue")
     
+    # Check docker
     if run_command("docker --version"):
         print_color("Docker is installed", "green")
     else:
         print_color("Docker is not installed or not in PATH", "red")
-        print_color("Please install Docker Desktop from https://www.docker.com/products/docker-desktop", "yellow")
+        if IS_WINDOWS and not IS_WSL:
+            print_color("Please install Docker from https://docs.docker.com/engine/install/", "yellow")
+        else:
+            print_color("Please install Docker Engine with: sudo apt-get install docker-ce docker-ce-cli containerd.io", "yellow")
         return False
     
     # Check docker-compose
-    if run_command("docker compose version"):
+    if run_command("docker compose version") or run_command("docker-compose version"):
         print_color("Docker Compose is installed", "green")
     else:
         print_color("Docker Compose is not installed or not in PATH", "red")
@@ -150,6 +156,110 @@ def setup_docker_files():
         return False
     
     print_color("All Docker files are present", "green")
+    
+    # For Linux/WSL, create shell scripts
+    if not IS_WINDOWS or IS_WSL:
+        # Create the shell scripts if they don't exist
+        if not os.path.exists("check-docker.sh"):
+            with open("check-docker.sh", "w") as f:
+                f.write("""#!/bin/bash
+# Check if Docker is running
+if docker info > /dev/null 2>&1; then
+  echo "Docker is running"
+  exit 0
+else
+  echo "Docker is not running. Please start it first."
+  exit 1
+fi
+""")
+            os.chmod("check-docker.sh", 0o755)
+            print_color("Created check-docker.sh script", "green")
+            
+        if not os.path.exists("run-ragbot.sh"):
+            with open("run-ragbot.sh", "w") as f:
+                f.write("""#!/bin/bash
+# Check if Docker is running
+if ! docker info > /dev/null 2>&1; then
+  echo "Docker is not running. Please start it first."
+  exit 1
+fi
+
+# Start the containers
+docker compose up -d
+
+echo "Services starting..."
+sleep 5
+
+echo "Web interface will be available at http://localhost:3000"
+echo "Use the default token from your .env file to log in"
+echo "Make sure to set the API base URL to http://localhost:8000 in the OpenWebUI settings"
+""")
+            os.chmod("run-ragbot.sh", 0o755)
+            print_color("Created run-ragbot.sh script", "green")
+            
+        if not os.path.exists("reset-ragbot.sh"):
+            with open("reset-ragbot.sh", "w") as f:
+                f.write("""#!/bin/bash
+echo "Stopping all containers..."
+docker compose down
+
+echo "Removing volumes..."
+docker volume rm ragbot_pgdata ragbot_openwebui-data 2>/dev/null || true
+
+echo "Pruning unused containers and networks..."
+docker container prune -f
+docker network prune -f
+
+echo "Starting clean system..."
+docker compose up -d postgres
+
+echo "Waiting for PostgreSQL to initialize..."
+sleep 10
+
+docker compose up -d
+
+echo "System has been reset and restarted!"
+""")
+            os.chmod("reset-ragbot.sh", 0o755)
+            print_color("Created reset-ragbot.sh script", "green")
+            
+        if not os.path.exists("startup.sh"):
+            with open("startup.sh", "w") as f:
+                f.write("""#!/bin/bash
+# Check if Docker is running
+if ! docker info > /dev/null 2>&1; then
+  echo "Docker is not running. Please start it first."
+  exit 1
+fi
+
+# Start the containers
+echo "Starting RAGbot containers..."
+docker compose up -d
+
+# Wait for services to start
+echo "Waiting for services to start..."
+sleep 10
+
+# Check if API is running
+echo "Checking if API is running..."
+if curl -s http://localhost:8000/api/health | grep -q "status"; then
+  echo "API is running!"
+else
+  echo "API is not responding. Check the logs with: docker compose logs ragbot-api"
+fi
+
+# Setup OpenWebUI
+echo "Setting up OpenWebUI..."
+echo "Web interface will be available at http://localhost:3000"
+echo "Use the default token from your .env file to log in"
+echo "Make sure to set the API base URL to http://localhost:8000 in the OpenWebUI settings"
+
+# Complete
+echo "RAGbot startup complete!"
+""")
+            os.chmod("startup.sh", 0o755)
+            print_color("Created startup.sh script", "green")
+    
     return True
 
 def main():
@@ -172,15 +282,15 @@ def main():
     
     print_color("\nSetup completed successfully!", "green")
     print_color("\nTo start the system, run:", "blue")
-    if IS_WINDOWS:
-        print_color("run-ragbot.bat", "yellow")
-    else:
+    if IS_WINDOWS and not IS_WSL:
         print_color("docker compose up -d", "yellow")
-    print_color("\nTo reset the system, run:", "blue")
-    if IS_WINDOWS:
-        print_color("reset-ragbot.bat", "yellow")
     else:
-        print_color("docker compose down && docker volume rm ragbot_pgdata", "yellow")
+        print_color("./run-ragbot.sh", "yellow")
+    print_color("\nTo reset the system, run:", "blue")
+    if IS_WINDOWS and not IS_WSL:
+        print_color("docker compose down && docker volume rm ragbot_pgdata ragbot_openwebui-data", "yellow")
+    else:
+        print_color("./reset-ragbot.sh", "yellow")
     print_color("\nThe web interface will be available at:", "blue")
     print_color("http://localhost:3000", "yellow")
 

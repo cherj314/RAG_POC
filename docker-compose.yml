@@ -79,7 +79,6 @@ services:
       - ragbot-network
     command: uvicorn api:app --host 0.0.0.0 --port 8000
     healthcheck:
-      # Fixed healthcheck to use internal container path
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
       interval: 10s
       timeout: 5s
@@ -93,13 +92,12 @@ services:
     environment:
       - WEBUI_AUTH_TOKEN=${WEBUI_AUTH_TOKEN:-default_token}
       - CUSTOM_API_KEY=${OPENAI_API_KEY}
-      - CUSTOM_API_BASE_URL=http://localhost:8000 ## Important: this needs to be set as the api url in openwebui settings.
+      - CUSTOM_API_BASE_URL=http://ragbot-api:8000 # Use container name for internal communication
       - CUSTOM_API_CONTEXT_SIZE=4096
       - API_BACKEND=custom
     volumes:
       - openwebui-data:/app/backend/data
     depends_on:
-      # Changed to start after API container starts, not waiting for health
       - ragbot-api
     networks:
       - ragbot-network
