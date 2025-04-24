@@ -1,0 +1,52 @@
+# RAGbot Environment Configuration Template
+# Rename this file to .env and fill in your specific values
+
+# API Keys
+# Required: Your OpenAI API key for generating responses
+OPENAI_API_KEY=your_openai_api_key_here
+
+# Database Configuration (used by both local Python and Docker)
+POSTGRES_USER=myuser
+POSTGRES_PASSWORD=your_secure_password_here
+POSTGRES_DB=vectordb
+# Use 'postgres' when running within Docker network, 'localhost' for local development
+DB_HOST=postgres
+DB_PORT=5432
+DB_USER=myuser
+DB_PASSWORD=your_secure_password_here
+
+# Vector DB Configuration
+COLLECTION_NAME=document_chunks
+
+# Model Configuration
+# Embedding model to use for document vectorization
+EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+
+# Chunking Configuration
+# Size of text chunks for vectorization
+CHUNK_SIZE=600
+# Overlap between consecutive chunks
+CHUNK_OVERLAP=50
+
+# Processing Parameters
+# Batch size for processing documents
+BATCH_SIZE=500
+# Number of parallel workers for document processing
+MAX_WORKERS=8
+
+# Data Location
+# Directory containing documents to be indexed
+DOCS_DIR=Documents
+
+# API Server Configuration
+API_HOST=0.0.0.0
+API_PORT=8000
+
+# Web UI Configuration (for OpenWebUI)
+# Authentication token for the web interface
+WEBUI_AUTH_TOKEN=your_secure_token_here
+WEBUI_PORT=3000
+
+# Optional: Llama CLI Configuration (only needed if using local Llama models)
+# LLAMA_CLI_PATH=/path/to/llama/executable
+# LLAMA_MODEL_PATH=/path/to/llama/model.gguf
