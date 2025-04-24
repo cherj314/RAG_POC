@@ -13,6 +13,10 @@ from dotenv import load_dotenv
 from tqdm import tqdm
 from pypdf import PdfReader
 from langchain.docstore.document import Document
+import subprocess
+import re
+import shutil
+import platform
 
 # Import the PDFLoader class from pdf_loader.py module
 from pdf_loader import PDFLoader
@@ -37,8 +41,150 @@ MAX_WORKERS = int(os.getenv("MAX_WORKERS", "8"))
 # Database connection string
 CONNECTION_STRING = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
+def create_env_file_if_needed():
+    """Create or update the .env file with required variables if it doesn't exist."""
+    if os.path.exists(".env"):
+        print("✅ .env file already exists.")
+        return
+    
+    print("🔧 Creating default .env file...")
+    
+    # Default values
+    env_vars = {
+        "POSTGRES_USER": "myuser",
+        "POSTGRES_PASSWORD": "mypassword",
+        "POSTGRES_DB": "vectordb",
+        "DB_HOST": "postgres",  # Use 'postgres' for Docker networking
+        "DB_PORT": "5432",
+        "DB_NAME": "vectordb",
+        "DB_USER": "myuser",
+        "DB_PASSWORD": "mypassword",
+        "API_PORT": "8000",
+        "WEBUI_PORT": "3000",
+        "EMBEDDING_MODEL": "sentence-transformers/all-MiniLM-L6-v2",
+        "COLLECTION_NAME": "document_chunks",
+        "CHUNK_SIZE": "600",
+        "CHUNK_OVERLAP": "50",
+        "WEBUI_AUTH_TOKEN": "default_token"
+    }
+    
+    # Ask for OpenAI API key if not set
+    env_vars["OPENAI_API_KEY"] = input("Enter your OpenAI API key (required): ").strip()
+    if not env_vars["OPENAI_API_KEY"]:
+        print("❌ No API key provided. You will need to set this in the .env file later.")
+    
+    # Write to .env file
+    with open(".env", "w") as f:
+        for key, value in env_vars.items():
+            f.write(f"{key}={value}\n")
+    
+    print("✅ Created new .env file")
+
+def setup_documents_directory():
+    """Create the Documents directory if it doesn't exist."""
+    docs_dir = os.path.join(os.getcwd(), "Documents")
+    if not os.path.exists(docs_dir):
+        os.makedirs(docs_dir)
+        print(f"✅ Created Documents directory at {docs_dir}")
+        
+        # Create a sample document for testing
+        sample_doc = os.path.join(docs_dir, "sample.txt")
+        with open(sample_doc, "w") as f:
+            f.write("This is a sample document for testing RAGbot's retrieval capabilities.\n\n")
+            f.write("RAGbot uses retrieval-augmented generation to provide accurate and contextually relevant responses based on your documents.\n\n")
+        print("✅ Created sample document")
+    else:
+        print(f"✅ Documents directory already exists at {docs_dir}")
+
+def check_docker():
+    """Check if Docker is running and properly configured."""
+    try:
+        result = subprocess.run(["docker", "info"], capture_output=True, text=True)
+        if result.returncode != 0:
+            print("❌ Docker is not running. Please start Docker and try again.")
+            return False
+        
+        print("✅ Docker is running")
+        
+        # Check for docker-compose
+        compose_result = subprocess.run(["docker", "compose", "version"], capture_output=True, text=True)
+        if compose_result.returncode != 0:
+            print("❌ Docker Compose is not available. Please install Docker Compose.")
+            return False
+        
+        print("✅ Docker Compose is available")
+        return True
+    
+    except FileNotFoundError:
+        print("❌ Docker is not installed. Please install Docker and try again.")
+        return False
+
+def create_helper_scripts():
+    """Create helper scripts for easier system management."""
+    # Determine if we're on Windows
+    is_windows = platform.system() == "Windows"
+    is_wsl = "microsoft-standard" in platform.uname().release.lower() if platform.system() == "Linux" else False
+    
+    if is_windows and not is_wsl:
+        # Create batch files for Windows
+        with open("ragbot-start.bat", "w") as f:
+            f.write("""@echo off
+echo Starting RAGbot...
+docker compose up -d
+echo.
+echo Web interface will be available at http://localhost:3000
+echo Use the default token from your .env file to log in
+echo.
+""")
+        
+        with open("ragbot-reset.bat", "w") as f:
+            f.write("""@echo off
+echo Stopping RAGbot and removing data...
+docker compose down
+docker volume rm ragbot_pgdata ragbot_openwebui-data
+echo.
+echo Starting fresh RAGbot instance...
+docker compose up -d
+echo.
+echo Web interface will be available at http://localhost:3000
+echo.
+""")
+        
+        print("✅ Created Windows helper scripts: ragbot-start.bat and ragbot-reset.bat")
+    
+    else:
+        # Create shell scripts for Linux/macOS/WSL
+        with open("ragbot-start.sh", "w") as f:
+            f.write("""#!/bin/bash
+echo "Starting RAGbot..."
+docker compose up -d
+echo ""
+echo "Web interface will be available at http://localhost:3000"
+echo "Use the default token from your .env file to log in"
+echo ""
+""")
+        
+        with open("ragbot-reset.sh", "w") as f:
+            f.write("""#!/bin/bash
+echo "Stopping RAGbot and removing data..."
+docker compose down
+docker volume rm ragbot_pgdata ragbot_openwebui-data 2>/dev/null || true
+echo ""
+echo "Starting fresh RAGbot instance..."
+docker compose up -d
+echo ""
+echo "Web interface will be available at http://localhost:3000"
+echo ""
+""")
+        
+        # Make scripts executable
+        os.chmod("ragbot-start.sh", 0o755)
+        os.chmod("ragbot-reset.sh", 0o755)
+        
+        print("✅ Created Unix helper scripts: ragbot-start.sh and ragbot-reset.sh")
+
 def setup_database():
-    """Set up the PostgreSQL database with pgvector extension."""
+    """Set up the PostgreSQL database with pgvector extension and optimizations."""
     print("📊 Setting up database...")
     start_time = time.time()
     
@@ -46,6 +192,91 @@ def setup_database():
     with engine.connect() as connection:
         # Enable pgvector extension
         connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        connection.commit()
+        
+        # Check if langchain_pg_embedding table exists and modify it
+        connection.execute(text("""
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_schema = 'public' 
+                AND table_name = 'langchain_pg_embedding'
+            ) THEN
+                ALTER TABLE langchain_pg_embedding
+                ALTER COLUMN embedding TYPE vector(384);
+            END IF;
+        END
+        $$;
+        """))
+        connection.commit()
+        
+        # Create an IVFFlat index if it doesn't exist
+        connection.execute(text("""
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_schema = 'public' 
+                AND table_name = 'langchain_pg_embedding'
+            ) AND NOT EXISTS (
+                SELECT 1
+                FROM pg_indexes
+                WHERE indexname = 'langchain_pg_embedding_vector_idx'
+            ) THEN
+                CREATE INDEX langchain_pg_embedding_vector_idx
+                ON langchain_pg_embedding
+                USING ivfflat (embedding vector_cosine_ops)
+                WITH (lists = 100);
+            END IF;
+        END
+        $$;
+        """))
+        connection.commit()
+        
+        # Add an index on collection_id
+        connection.execute(text("""
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_schema = 'public' 
+                AND table_name = 'langchain_pg_embedding'
+            ) AND NOT EXISTS (
+                SELECT 1
+                FROM pg_indexes
+                WHERE indexname = 'langchain_pg_embedding_collection_id_idx'
+            ) THEN
+                CREATE INDEX langchain_pg_embedding_collection_id_idx
+                ON langchain_pg_embedding(collection_id);
+            END IF;
+        END
+        $$;
+        """))
+        connection.commit()
+        
+        # Analyze tables for query optimization
+        connection.execute(text("""
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_schema = 'public' 
+                AND table_name = 'langchain_pg_embedding'
+            ) THEN
+                ANALYZE langchain_pg_embedding;
+            END IF;
+        END
+        $$;
+        """))
+        connection.commit()
+        
+        # Increase work_mem for better performance
+        connection.execute(text("ALTER SYSTEM SET work_mem = '32MB'"))
+        connection.commit()
+        
+        # Reload configuration
+        connection.execute(text("SELECT pg_reload_conf()"))
         connection.commit()
         
     print(f"✅ Database setup completed in {time.time() - start_time:.2f}s")
@@ -255,20 +486,48 @@ def run_pipeline():
     print(f"\n⏱️ Total ingestion time: {total_time:.2f} seconds")
     print("=" * 50)
 
-if __name__ == "__main__":
-    # Add retry logic for container environments
-    max_retries = 5
-    retry_delay = 3  # seconds
+def setup():
+    """Perform initial setup tasks."""
+    print("\n" + "=" * 50)
+    print("🤖 RAGbot Initial Setup")
+    print("=" * 50)
     
-    for attempt in range(max_retries):
-        try:
-            run_pipeline()
-            break
-        except Exception as e:
-            if "could not connect to server" in str(e).lower() and attempt < max_retries - 1:
-                print(f"Database connection failed. Retrying in {retry_delay}s... ({attempt+1}/{max_retries})")
-                time.sleep(retry_delay)
-                retry_delay *= 1.5  # Exponential backoff
-            else:
-                print(f"Fatal error: {e}")
-                sys.exit(1)
+    # Create .env file if it doesn't exist
+    create_env_file_if_needed()
+    
+    # Set up Documents directory
+    setup_documents_directory()
+    
+    # Check Docker installation
+    if not check_docker():
+        print("⚠️ Docker issues detected. Please fix Docker configuration before continuing.")
+        return False
+    
+    # Create helper scripts
+    create_helper_scripts()
+    
+    print("\n✅ RAGbot setup complete!")
+    print("=" * 50)
+    return True
+
+if __name__ == "__main__":
+    # Check for setup argument
+    if len(sys.argv) > 1 and sys.argv[1] == "setup":
+        setup()
+    else:
+        # Add retry logic for container environments
+        max_retries = 5
+        retry_delay = 3  # seconds
+        
+        for attempt in range(max_retries):
+            try:
+                run_pipeline()
+                break
+            except Exception as e:
+                if "could not connect to server" in str(e).lower() and attempt < max_retries - 1:
+                    print(f"Database connection failed. Retrying in {retry_delay}s... ({attempt+1}/{max_retries})")
+                    time.sleep(retry_delay)
+                    retry_delay *= 1.5  # Exponential backoff
+                else:
+                    print(f"Fatal error: {e}")
+                    sys.exit(1)
