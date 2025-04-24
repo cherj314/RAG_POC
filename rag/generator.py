@@ -1,7 +1,7 @@
 import os
 import openai
+import re
 from dotenv import load_dotenv
-
 
 # Load environment variables
 load_dotenv()
@@ -9,7 +9,7 @@ load_dotenv()
 # Configure OpenAI client
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
-def generate_response(prompt, max_tokens=2048, model="gpt-4o"):
+def generate_response(prompt, max_tokens=2048, model="gpt-4o", preserve_formatting=True):
     """
     Generate a response using OpenAI's model.
     
@@ -17,6 +17,7 @@ def generate_response(prompt, max_tokens=2048, model="gpt-4o"):
         prompt (str): The input prompt for the LLM
         max_tokens (int): Maximum number of tokens to generate
         model (str): The OpenAI model to use
+        preserve_formatting (bool): Whether to preserve paragraph breaks and formatting
         
     Returns:
         str: The generated response
@@ -32,7 +33,24 @@ def generate_response(prompt, max_tokens=2048, model="gpt-4o"):
             temperature=0.7,
         )
         
-        return response.choices[0].message.content.strip()
+        raw_content = response.choices[0].message.content.strip()
+        
+        # If we need to preserve formatting
+        if preserve_formatting:
+            # Ensure paragraph breaks are maintained
+            # Replace any instances of 3+ newlines with exactly 2 newlines
+            formatted_content = re.sub(r'\n{3,}', '\n\n', raw_content)
+            
+            # Ensure all headers and bullet points are properly spaced
+            # Add newlines before headers if they don't already have them
+            formatted_content = re.sub(r'(?<!\n\n)(#{1,6}\s)', r'\n\n\1', formatted_content)
+            
+            # Ensure all bullet points have proper spacing
+            formatted_content = re.sub(r'(?<!\n)(\s*[-*+]\s)', r'\n\1', formatted_content)
+            
+            return formatted_content
+        else:
+            return raw_content
         
     except Exception as e:
         return f"Error generating response: {str(e)}"
