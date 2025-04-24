@@ -31,6 +31,7 @@ A lightweight Retrieval-Augmented Generation system for creating customized soft
 - Semantic chunking of documents 
 - Context-aware proposal generation
 - OpenWebUI integration
+- Support for both text (.txt) and PDF (.pdf) documents
 
 ## Project Structure
 
@@ -41,7 +42,7 @@ A lightweight Retrieval-Augmented Generation system for creating customized soft
 
 ## Adding Documents
 
-1. Place text files in the `Documents/` folder
+1. Place text files (.txt) or PDF files (.pdf) in the `Documents/` folder
 2. Run ingestion:
    ```bash
    docker compose up ragbot-ingest
@@ -53,10 +54,10 @@ A lightweight Retrieval-Augmented Generation system for creating customized soft
 - Sentence Transformers for embeddings
 - OpenAI API for generation
 - FastAPI for web server
+- pypdf for PDF processing
 
 ## Whats next?
 
-- Add PDF ingestion capability
 - Add other file type ingestion (xls, json)
 - Increase vectordb scalability and retrieval speed
 - Improve retrieval capabilities and customization

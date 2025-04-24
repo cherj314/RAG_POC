@@ -52,8 +52,11 @@ def generate_proposal(user_input):
     
     # Step 5: Generate response
     print("\n🧠 Generating proposal...\n")
+    print("(This may take a moment depending on the complexity of your request)")
     response = generate_response(prompt)
+    print("\n====== GENERATED PROPOSAL ======\n")
     print(response)
+    print("\n================================\n")
     
     return response
 
@@ -65,7 +68,10 @@ def run_interactive():
     while True:
         user_query = input("Enter a proposal request:\n> ")
         
-        if user_query.lower() in ['exit', 'quit']:
+        # Check for exit commands
+        cmd = user_query.lower().strip()
+        
+        if cmd in ['exit', 'quit', 'q', 'bye']:
             print("👋 Goodbye!")
             break
         
@@ -73,12 +79,19 @@ def run_interactive():
         generate_proposal(user_query)
         print("\n---\n")
 
+def print_banner():
+    """Print a welcome banner with information"""
+    print("\n🤖 RAGbot - AI Proposal Assistant")
+    print("Supports .txt and .pdf files in the Documents/ directory")
+
 if __name__ == "__main__":
     # Register cleanup function to run on exit
     atexit.register(cleanup)
     
     # Initialize components
     initialize()
+    
+    print_banner()
     
     if len(sys.argv) > 1:
         # Non-interactive mode with command line argument
