@@ -19,6 +19,12 @@ services:
       retries: 5
     networks:
       - ragbot-network
+    # Add resource constraints for better performance
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
 
   ragbot-ingest:
     build:
@@ -33,8 +39,9 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
       - COLLECTION_NAME=${COLLECTION_NAME:-document_chunks}
-      - CHUNK_SIZE=${CHUNK_SIZE:-400}
+      - CHUNK_SIZE=${CHUNK_SIZE:-600}
       - CHUNK_OVERLAP=${CHUNK_OVERLAP:-50}
+      - BATCH_SIZE=${BATCH_SIZE:-500}
       - PYTHONUNBUFFERED=1
     depends_on:
       postgres:
@@ -46,7 +53,13 @@ services:
     networks:
       - ragbot-network
     command: python rag/ingest.py
-    restart: on-failure
+    restart: "no"  # Changed from on-failure to prevent auto-restart
+    # Add resource constraints for PDF processing
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 4G  # Increased memory for PDF processing
 
   ragbot-api:
     build:
@@ -63,14 +76,12 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
       - COLLECTION_NAME=${COLLECTION_NAME:-document_chunks}
-      - CHUNK_SIZE=${CHUNK_SIZE:-400}
+      - CHUNK_SIZE=${CHUNK_SIZE:-600}
       - CHUNK_OVERLAP=${CHUNK_OVERLAP:-50}
       - PYTHONUNBUFFERED=1
     depends_on:
       postgres:
         condition: service_healthy
-      ragbot-ingest:
-        condition: service_completed_successfully
     volumes:
       - ./Documents:/app/Documents
       - ./.env:/app/.env
@@ -79,12 +90,16 @@ services:
       - ragbot-network
     command: uvicorn api:app --host 0.0.0.0 --port 8000
     healthcheck:
-      # Fixed healthcheck to use internal container path
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 20s  # Increased startup time
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
 
   openwebui:
     image: ghcr.io/open-webui/open-webui:main
@@ -99,10 +114,14 @@ services:
     volumes:
       - openwebui-data:/app/backend/data
     depends_on:
-      # Changed to start after API container starts, not waiting for health
       - ragbot-api
     networks:
       - ragbot-network
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
 
 networks:
   ragbot-network:
