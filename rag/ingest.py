@@ -11,20 +11,12 @@ from langchain_community.embeddings import HuggingFaceEmbeddings
 from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
 from tqdm import tqdm
-from pypdf import PdfReader
-from langchain.docstore.document import Document
-import subprocess
-import re
-import shutil
-import platform
-
-# Import the PDFLoader class from pdf_loader.py module
 from pdf_loader import PDFLoader
 
 # Load environment variables
 load_dotenv()
 
-# Import configuration from .env
+# Environment variables with defaults
 DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_PORT = int(os.getenv("DB_PORT", "5432"))
 DB_NAME = os.getenv("DB_NAME", "vectordb")
@@ -41,161 +33,21 @@ MAX_WORKERS = int(os.getenv("MAX_WORKERS", "8"))
 # Database connection string
 CONNECTION_STRING = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
-def create_env_file_if_needed():
-    """Create or update the .env file with required variables if it doesn't exist."""
-    if os.path.exists(".env"):
-        print("✅ .env file already exists.")
-        return
-    
-    print("🔧 Creating default .env file...")
-    
-    # Default values
-    env_vars = {
-        "POSTGRES_USER": "myuser",
-        "POSTGRES_PASSWORD": "mypassword",
-        "POSTGRES_DB": "vectordb",
-        "DB_HOST": "postgres",  # Use 'postgres' for Docker networking
-        "DB_PORT": "5432",
-        "DB_NAME": "vectordb",
-        "DB_USER": "myuser",
-        "DB_PASSWORD": "mypassword",
-        "API_PORT": "8000",
-        "WEBUI_PORT": "3000",
-        "EMBEDDING_MODEL": "sentence-transformers/all-MiniLM-L6-v2",
-        "COLLECTION_NAME": "document_chunks",
-        "CHUNK_SIZE": "600",
-        "CHUNK_OVERLAP": "50",
-        "WEBUI_AUTH_TOKEN": "default_token"
-    }
-    
-    # Ask for OpenAI API key if not set
-    env_vars["OPENAI_API_KEY"] = input("Enter your OpenAI API key (required): ").strip()
-    if not env_vars["OPENAI_API_KEY"]:
-        print("❌ No API key provided. You will need to set this in the .env file later.")
-    
-    # Write to .env file
-    with open(".env", "w") as f:
-        for key, value in env_vars.items():
-            f.write(f"{key}={value}\n")
-    
-    print("✅ Created new .env file")
-
-def setup_documents_directory():
-    """Create the Documents directory if it doesn't exist."""
-    docs_dir = os.path.join(os.getcwd(), "Documents")
-    if not os.path.exists(docs_dir):
-        os.makedirs(docs_dir)
-        print(f"✅ Created Documents directory at {docs_dir}")
-        
-        # Create a sample document for testing
-        sample_doc = os.path.join(docs_dir, "sample.txt")
-        with open(sample_doc, "w") as f:
-            f.write("This is a sample document for testing RAGbot's retrieval capabilities.\n\n")
-            f.write("RAGbot uses retrieval-augmented generation to provide accurate and contextually relevant responses based on your documents.\n\n")
-        print("✅ Created sample document")
-    else:
-        print(f"✅ Documents directory already exists at {docs_dir}")
-
-def check_docker():
-    """Check if Docker is running and properly configured."""
-    try:
-        result = subprocess.run(["docker", "info"], capture_output=True, text=True)
-        if result.returncode != 0:
-            print("❌ Docker is not running. Please start Docker and try again.")
-            return False
-        
-        print("✅ Docker is running")
-        
-        # Check for docker-compose
-        compose_result = subprocess.run(["docker", "compose", "version"], capture_output=True, text=True)
-        if compose_result.returncode != 0:
-            print("❌ Docker Compose is not available. Please install Docker Compose.")
-            return False
-        
-        print("✅ Docker Compose is available")
-        return True
-    
-    except FileNotFoundError:
-        print("❌ Docker is not installed. Please install Docker and try again.")
-        return False
-
-def create_helper_scripts():
-    """Create helper scripts for easier system management."""
-    # Determine if we're on Windows
-    is_windows = platform.system() == "Windows"
-    is_wsl = "microsoft-standard" in platform.uname().release.lower() if platform.system() == "Linux" else False
-    
-    if is_windows and not is_wsl:
-        # Create batch files for Windows
-        with open("ragbot-start.bat", "w") as f:
-            f.write("""@echo off
-echo Starting RAGbot...
-docker compose up -d
-echo.
-echo Web interface will be available at http://localhost:3000
-echo Use the default token from your .env file to log in
-echo.
-""")
-        
-        with open("ragbot-reset.bat", "w") as f:
-            f.write("""@echo off
-echo Stopping RAGbot and removing data...
-docker compose down
-docker volume rm ragbot_pgdata ragbot_openwebui-data
-echo.
-echo Starting fresh RAGbot instance...
-docker compose up -d
-echo.
-echo Web interface will be available at http://localhost:3000
-echo.
-""")
-        
-        print("✅ Created Windows helper scripts: ragbot-start.bat and ragbot-reset.bat")
-    
-    else:
-        # Create shell scripts for Linux/macOS/WSL
-        with open("ragbot-start.sh", "w") as f:
-            f.write("""#!/bin/bash
-echo "Starting RAGbot..."
-docker compose up -d
-echo ""
-echo "Web interface will be available at http://localhost:3000"
-echo "Use the default token from your .env file to log in"
-echo ""
-""")
-        
-        with open("ragbot-reset.sh", "w") as f:
-            f.write("""#!/bin/bash
-echo "Stopping RAGbot and removing data..."
-docker compose down
-docker volume rm ragbot_pgdata ragbot_openwebui-data 2>/dev/null || true
-echo ""
-echo "Starting fresh RAGbot instance..."
-docker compose up -d
-echo ""
-echo "Web interface will be available at http://localhost:3000"
-echo ""
-""")
-        
-        # Make scripts executable
-        os.chmod("ragbot-start.sh", 0o755)
-        os.chmod("ragbot-reset.sh", 0o755)
-        
-        print("✅ Created Unix helper scripts: ragbot-start.sh and ragbot-reset.sh")
-
 def setup_database():
     """Set up the PostgreSQL database with pgvector extension and optimizations."""
     print("📊 Setting up database...")
     start_time = time.time()
     
     engine = create_engine(CONNECTION_STRING)
-    with engine.connect() as connection:
+    
+    # Split operations into regular operations (can be in transaction) and 
+    # system operations (must be outside transaction)
+    regular_operations = [
         # Enable pgvector extension
-        connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-        connection.commit()
+        "CREATE EXTENSION IF NOT EXISTS vector",
         
-        # Check if langchain_pg_embedding table exists and modify it
-        connection.execute(text("""
+        # Update embedding table if it exists
+        """
         DO $$
         BEGIN
             IF EXISTS (
@@ -208,11 +60,10 @@ def setup_database():
             END IF;
         END
         $$;
-        """))
-        connection.commit()
+        """,
         
-        # Create an IVFFlat index if it doesn't exist
-        connection.execute(text("""
+        # Create an IVFFlat index if needed
+        """
         DO $$
         BEGIN
             IF EXISTS (
@@ -231,11 +82,10 @@ def setup_database():
             END IF;
         END
         $$;
-        """))
-        connection.commit()
+        """,
         
         # Add an index on collection_id
-        connection.execute(text("""
+        """
         DO $$
         BEGIN
             IF EXISTS (
@@ -252,11 +102,10 @@ def setup_database():
             END IF;
         END
         $$;
-        """))
-        connection.commit()
+        """,
         
         # Analyze tables for query optimization
-        connection.execute(text("""
+        """
         DO $$
         BEGIN
             IF EXISTS (
@@ -268,17 +117,26 @@ def setup_database():
             END IF;
         END
         $$;
-        """))
+        """
+    ]
+    
+    system_operations = [
+        # Optimize database parameters - must be outside transaction
+        "ALTER SYSTEM SET work_mem = '32MB'",
+        "SELECT pg_reload_conf()"
+    ]
+    
+    # Execute regular operations in a transaction
+    with engine.connect() as connection:
+        for operation in regular_operations:
+            connection.execute(text(operation))
         connection.commit()
-        
-        # Increase work_mem for better performance
-        connection.execute(text("ALTER SYSTEM SET work_mem = '32MB'"))
-        connection.commit()
-        
-        # Reload configuration
-        connection.execute(text("SELECT pg_reload_conf()"))
-        connection.commit()
-        
+    
+    # Execute system operations outside of transactions
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
+        for operation in system_operations:
+            connection.execute(text(operation))
+    
     print(f"✅ Database setup completed in {time.time() - start_time:.2f}s")
 
 def process_document(file_path):
@@ -293,15 +151,7 @@ def process_document(file_path):
         print(f"\n📄 Processing {file_name} ({file_size:.1f} KB)...")
         
         # Load the document based on file type
-        if file_extension == '.pdf':
-            # Use optimized PDF loader for PDF files
-            loader = PDFLoader(file_path, verbose=True)
-        else:
-            # Default to text loader for other files
-            print(f"  - Loading text file: {file_name}")
-            loader = TextLoader(file_path, encoding="utf-8")
-        
-        # Load the document
+        loader = PDFLoader(file_path, verbose=True) if file_extension == '.pdf' else TextLoader(file_path, encoding="utf-8")
         document = loader.load()
         
         if not document:
@@ -310,20 +160,16 @@ def process_document(file_path):
             
         print(f"  - Extracted {len(document)} document segments")
         
-        # Add metadata to each document if not already present
+        # Add metadata to each document
         for doc in document:
             if not doc.metadata.get("file_name"):
                 doc.metadata["file_name"] = file_name
             if not doc.metadata.get("file_id"):
                 doc.metadata["file_id"] = file_id
         
-        # Create a more efficient text splitter for PDFs
+        # Create text splitter with separators
         separators = ["\n\n", "\n", ". ", "! ", "? ", ";", ":", " ", ""]
-        
-        # Adjust chunk size based on file type (larger for PDFs to reduce number of chunks)
-        chunk_size = CHUNK_SIZE
-        if file_extension == '.pdf':
-            chunk_size = CHUNK_SIZE + 200  # Larger chunks for PDFs
+        chunk_size = CHUNK_SIZE + 200 if file_extension == '.pdf' else CHUNK_SIZE
         
         print(f"  - Splitting into chunks (size={chunk_size}, overlap={CHUNK_OVERLAP})...")
         text_splitter = RecursiveCharacterTextSplitter(
@@ -351,41 +197,32 @@ def find_documents():
         
     # Find all supported files in the docs directory
     print(f"🔍 Searching for documents in '{DOCS_DIR}'...")
-    doc_files = []
     txt_files = glob.glob(os.path.join(DOCS_DIR, "*.txt"))
     pdf_files = glob.glob(os.path.join(DOCS_DIR, "*.pdf"))
     
-    doc_files.extend(txt_files)
-    doc_files.extend(pdf_files)
-    
+    doc_files = txt_files + pdf_files
     print(f"  - Found {len(txt_files)} text files and {len(pdf_files)} PDF files")
     
     return doc_files
 
-def batch_process_chunks(all_chunks, batch_size=BATCH_SIZE):
-    """Process chunks in batches to avoid memory issues with large documents."""
-    return [all_chunks[i:i + batch_size] for i in range(0, len(all_chunks), batch_size)]
-
-def process_documents_in_parallel(doc_files):
-    """Process multiple documents in parallel"""
+def process_documents(doc_files):
+    """Process multiple documents using parallel processing when possible"""
     all_chunks = []
     
     if not doc_files:
         print("❌ No documents found for processing")
         return all_chunks
         
-    print(f"🚀 Processing {len(doc_files)} documents in parallel...")
+    print(f"🚀 Processing {len(doc_files)} documents...")
     start_time = time.time()
     
-    # Process text files first, then PDFs (text files are usually faster)
-    text_files = [f for f in doc_files if f.lower().endswith('.txt')]
-    pdf_files = [f for f in doc_files if f.lower().endswith('.pdf')]
+    # Sort files by type and size for better processing
+    text_files = sorted([f for f in doc_files if f.lower().endswith('.txt')], 
+                        key=os.path.getsize)
+    pdf_files = sorted([f for f in doc_files if f.lower().endswith('.pdf')], 
+                       key=os.path.getsize)
     
-    # Sort files by size (smallest first for better parallelization)
-    text_files.sort(key=lambda f: os.path.getsize(f))
-    pdf_files.sort(key=lambda f: os.path.getsize(f))
-    
-    # Process text files
+    # Process text files in parallel
     if text_files:
         print(f"📝 Processing {len(text_files)} text files...")
         with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
@@ -393,15 +230,12 @@ def process_documents_in_parallel(doc_files):
             for chunks in chunks_list:
                 all_chunks.extend(chunks)
     
-    # Process PDF files
+    # Process PDF files (one at a time to avoid memory issues)
     if pdf_files:
         print(f"📄 Processing {len(pdf_files)} PDF files...")
-        # Use fewer workers for PDFs as they're more resource intensive
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, MAX_WORKERS // 2)) as executor:
-            for pdf_file in pdf_files:
-                # Process PDFs one at a time to avoid memory issues
-                chunks = process_document(pdf_file)
-                all_chunks.extend(chunks)
+        for pdf_file in pdf_files:
+            chunks = process_document(pdf_file)
+            all_chunks.extend(chunks)
     
     total_time = time.time() - start_time
     if all_chunks:
@@ -411,28 +245,40 @@ def process_documents_in_parallel(doc_files):
     
     return all_chunks
 
-def store_chunks_in_db(chunks_batch, embeddings, batch_num, total_batches):
-    """Store a batch of chunks in the vector database."""
+def store_chunks_in_db(chunks, embeddings):
+    """Store chunks in the vector database using batching"""
+    if not chunks:
+        print("No chunks to store.")
+        return
+        
+    print(f"💾 Storing {len(chunks)} chunks in vector database...")
     start_time = time.time()
-    print(f"💾 Storing batch {batch_num}/{total_batches} ({len(chunks_batch)} chunks)...")
     
-    try:
-        # Initialize PGVector with embeddings model and connection details
-        PGVector.from_documents(
-            documents=chunks_batch,
-            embedding=embeddings,
-            collection_name=COLLECTION_NAME,
-            connection_string=CONNECTION_STRING,
-            pre_delete_collection=(batch_num == 1)  # Only delete on first batch
-        )
+    # Split chunks into batches
+    batches = [chunks[i:i + BATCH_SIZE] for i in range(0, len(chunks), BATCH_SIZE)]
+    
+    # Store each batch
+    for i, batch in enumerate(batches, 1):
+        batch_start = time.time()
+        print(f"  - Storing batch {i}/{len(batches)} ({len(batch)} chunks)...")
         
-        proc_time = time.time() - start_time
-        print(f"✅ Batch {batch_num}/{total_batches} stored in {proc_time:.2f}s")
-        return True
-        
-    except Exception as e:
-        print(f"❌ Error storing batch {batch_num}: {e}")
-        return False
+        try:
+            # Initialize PGVector with embeddings model and connection details
+            PGVector.from_documents(
+                documents=batch,
+                embedding=embeddings,
+                collection_name=COLLECTION_NAME,
+                connection_string=CONNECTION_STRING,
+                pre_delete_collection=(i == 1)  # Only delete on first batch
+            )
+            
+            batch_time = time.time() - batch_start
+            print(f"    ✅ Batch {i}/{len(batches)} stored in {batch_time:.2f}s")
+        except Exception as e:
+            print(f"    ❌ Error storing batch {i}: {e}")
+    
+    total_time = time.time() - start_time
+    print(f"✅ All chunks stored in {total_time:.2f}s")
 
 def run_pipeline():
     """Main ingestion pipeline with performance optimizations."""
@@ -452,16 +298,12 @@ def run_pipeline():
         print("❌ No documents found for processing. Add files to the Documents directory.")
         return
     
-    # Process documents in parallel
-    all_chunks = process_documents_in_parallel(doc_files)
+    # Process documents
+    all_chunks = process_documents(doc_files)
     
     if not all_chunks:
         print("❌ No chunks were generated. Check your documents and processing settings.")
         return
-    
-    # Split chunks into batches to avoid memory issues
-    chunks_batches = batch_process_chunks(all_chunks)
-    total_batches = len(chunks_batches)
     
     # Initialize embedding model
     print(f"🧠 Initializing embedding model: {EMBEDDING_MODEL}")
@@ -469,65 +311,24 @@ def run_pipeline():
     embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
     print(f"✅ Model initialized in {time.time() - model_start:.2f}s")
     
-    # Store chunks in vector database in batches
-    print(f"💾 Storing {len(all_chunks)} chunks in {total_batches} batches...")
-    
-    success_count = 0
-    for i, batch in enumerate(chunks_batches, 1):
-        if store_chunks_in_db(batch, embeddings, i, total_batches):
-            success_count += 1
-    
-    if success_count == total_batches:
-        print(f"🎉 All {len(all_chunks)} chunks successfully stored with embeddings")
-    else:
-        print(f"⚠️ {success_count}/{total_batches} batches successfully stored")
+    # Store chunks in vector database
+    store_chunks_in_db(all_chunks, embeddings)
     
     total_time = time.time() - pipeline_start
     print(f"\n⏱️ Total ingestion time: {total_time:.2f} seconds")
     print("=" * 50)
 
-def setup():
-    """Perform initial setup tasks."""
-    print("\n" + "=" * 50)
-    print("🤖 RAGbot Initial Setup")
-    print("=" * 50)
-    
-    # Create .env file if it doesn't exist
-    create_env_file_if_needed()
-    
-    # Set up Documents directory
-    setup_documents_directory()
-    
-    # Check Docker installation
-    if not check_docker():
-        print("⚠️ Docker issues detected. Please fix Docker configuration before continuing.")
-        return False
-    
-    # Create helper scripts
-    create_helper_scripts()
-    
-    print("\n✅ RAGbot setup complete!")
-    print("=" * 50)
-    return True
-
 if __name__ == "__main__":
-    # Check for setup argument
-    if len(sys.argv) > 1 and sys.argv[1] == "setup":
-        setup()
-    else:
-        # Add retry logic for container environments
-        max_retries = 5
-        retry_delay = 3  # seconds
-        
-        for attempt in range(max_retries):
-            try:
-                run_pipeline()
-                break
-            except Exception as e:
-                if "could not connect to server" in str(e).lower() and attempt < max_retries - 1:
-                    print(f"Database connection failed. Retrying in {retry_delay}s... ({attempt+1}/{max_retries})")
-                    time.sleep(retry_delay)
-                    retry_delay *= 1.5  # Exponential backoff
-                else:
-                    print(f"Fatal error: {e}")
-                    sys.exit(1)
+    # Add retry logic for container environments
+    for attempt in range(5):
+        try:
+            run_pipeline()
+            break
+        except Exception as e:
+            if "could not connect to server" in str(e).lower() and attempt < 4:
+                retry_delay = 3 * (1.5 ** attempt)  # Exponential backoff
+                print(f"Database connection failed. Retrying in {retry_delay:.1f}s... ({attempt+1}/5)")
+                time.sleep(retry_delay)
+            else:
+                print(f"Fatal error: {e}")
+                sys.exit(1)

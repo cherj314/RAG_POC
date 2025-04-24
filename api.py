@@ -39,7 +39,7 @@ class ProposalRequest(BaseModel):
     query: str
     similarity_threshold: Optional[float] = 0.5
     max_chunks: Optional[int] = 5
-    show_retrieved_only: Optional[bool] = False  # New parameter to show only retrieved chunks
+    show_retrieved_only: Optional[bool] = False
 
 class Message(BaseModel):
     role: str
@@ -51,7 +51,7 @@ class ChatRequest(BaseModel):
     model: Optional[str] = "ragbot"
     temperature: Optional[float] = 0.7
     max_tokens: Optional[int] = 2048
-    show_retrieved: Optional[bool] = True  # New parameter to control retrieval visibility
+    show_retrieved: Optional[bool] = True
     
 class RetrievedChunk(BaseModel):
     content: str
@@ -102,7 +102,7 @@ async def generate_proposal(request: ProposalRequest):
     try:
         ensure_initialized()
         
-        # Step 1: Retrieve relevant chunks
+        # Retrieve relevant chunks
         chunks = search_postgres(
             request.query,
             k=request.max_chunks,
@@ -118,30 +118,25 @@ async def generate_proposal(request: ProposalRequest):
         # Format retrieved chunks for response
         retrieved_chunks = format_retrieved_chunks(chunks)
         
-        # If user only wants to see retrieved chunks, return them without generating a proposal
+        # If user only wants to see retrieved chunks, return them without generating
         if request.show_retrieved_only:
             return {
                 "success": True,
                 "retrieved_chunks": retrieved_chunks,
-                "metadata": {
-                    "query": request.query
-                }
+                "metadata": {"query": request.query}
             }
         
-        # Step 2: Build prompt
+        # Build prompt and generate response
         prompt = build_prompt(chunks, request.query)
-        
-        # Step 3: Generate response
         start_time = time.time()
         response = generate_response(prompt)
-        generation_time = time.time() - start_time
         
         return {
             "success": True,
             "proposal": response,
             "retrieved_chunks": retrieved_chunks,
             "metadata": {
-                "generation_time": f"{generation_time:.2f}s",
+                "generation_time": f"{time.time() - start_time:.2f}s",
                 "query": request.query
             }
         }
@@ -160,11 +155,7 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
         ensure_initialized()
         
         # Extract the last user message as our query
-        last_user_message = None
-        for msg in reversed(request.messages):
-            if msg.role == "user":
-                last_user_message = msg.content
-                break
+        last_user_message = next((msg.content for msg in reversed(request.messages) if msg.role == "user"), None)
         
         if not last_user_message:
             raise HTTPException(status_code=400, detail="No user message found in the request")
@@ -178,56 +169,41 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
         
         # Format retrieved chunks
         retrieved_chunks = format_retrieved_chunks(chunks)
+        show_retrieved = getattr(request, 'show_retrieved', True)
         
-        # Check if show_retrieved is set to True or not provided (default is True)
-        show_retrieved = request.show_retrieved if hasattr(request, 'show_retrieved') else True
-        
-        # Prepare response content
+        # Generate text based on retrieved chunks
         if chunks:
-            # Build the prompt with retrieved chunks
             prompt = build_prompt(chunks, last_user_message)
             
-            # If show_retrieved is True, first show the retrieved chunks
             if show_retrieved:
-                # Prepare a message that displays the retrieved chunks
+                # Show retrieved chunks + generated response
                 retrieved_content = "📚 **Retrieved Relevant Information:**\n\n"
                 for i, chunk_info in enumerate(retrieved_chunks, 1):
                     retrieved_content += f"**[{i}] Source: {chunk_info['source']} (Score: {chunk_info['score']:.3f})**\n"
-                    # Format the chunk content with proper paragraph breaks
                     chunk_text = chunk_info['content']
-                    # Ensure content ends with a newline
                     if not chunk_text.endswith('\n'):
                         chunk_text += '\n'
                     retrieved_content += f"{chunk_text}\n"
                 retrieved_content += "---\n\n**Generating proposal based on these sources...**\n\n"
                 
-                # Add the chunks first, then generate the response with formatting preserved
                 generated_response = generate_response(prompt, max_tokens=request.max_tokens, preserve_formatting=True)
-                
-                # Ensure there's a proper paragraph break between retrieved content and generated text
-                if not generated_response.startswith('\n'):
-                    generated_text = retrieved_content + generated_response
-                else:
-                    generated_text = retrieved_content + generated_response
+                generated_text = retrieved_content + generated_response
             else:
-                # Just generate the response without showing retrieved chunks
+                # Just generate the response without showing chunks
                 generated_text = generate_response(prompt, max_tokens=request.max_tokens, preserve_formatting=True)
         else:
             # No relevant chunks found
-            if show_retrieved:
-                generated_text = (
-                    "❌ **No relevant information found in my knowledge base.**\n\n"
-                    "I'm sorry, but I couldn't find any relevant information in my knowledge base "
-                    "about your query. Could you please rephrase your question or ask about something "
-                    "related to software development proposals, which is my area of expertise?"
-                )
-            else:
-                generated_text = (
-                    "I'm sorry, but I couldn't find any relevant information in my knowledge base "
-                    "about your query. Could you please rephrase your question or ask about something "
-                    "related to software development proposals, which is my area of expertise?"
-                )
-                
+            generated_text = (
+                "❌ **No relevant information found in my knowledge base.**\n\n"
+                "I'm sorry, but I couldn't find any relevant information in my knowledge base "
+                "about your query. Could you please rephrase your question or ask about something "
+                "related to software development proposals, which is my area of expertise?"
+            ) if show_retrieved else (
+                "I'm sorry, but I couldn't find any relevant information in my knowledge base "
+                "about your query. Could you please rephrase your question or ask about something "
+                "related to software development proposals, which is my area of expertise?"
+            )
+        
         # Format as OpenAI API response
         response = {
             "id": f"chatcmpl-{int(time.time())}",
@@ -259,7 +235,7 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
     
     except Exception as e:
         # Return a proper error response
-        response = {
+        return {
             "id": f"chatcmpl-error-{int(time.time())}",
             "object": "chat.completion",
             "created": int(time.time()),
@@ -280,16 +256,12 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
                 "total_tokens": sum(len(m.content.split()) for m in request.messages)
             }
         }
-        
-        return response
 
-# New endpoint to get only retrieved chunks without generating a response
+# Endpoint to get only retrieved chunks
 @app.post("/api/retrieve-chunks")
 async def retrieve_chunks(request: ProposalRequest):
     try:
         ensure_initialized()
-        
-        # Retrieve relevant chunks
         chunks = search_postgres(
             request.query,
             k=request.max_chunks,
@@ -302,21 +274,16 @@ async def retrieve_chunks(request: ProposalRequest):
                 "message": "No relevant content found for the query."
             }
         
-        # Format retrieved chunks for response
-        retrieved_chunks = format_retrieved_chunks(chunks)
-        
         return {
             "success": True,
-            "retrieved_chunks": retrieved_chunks,
-            "metadata": {
-                "query": request.query
-            }
+            "retrieved_chunks": format_retrieved_chunks(chunks),
+            "metadata": {"query": request.query}
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error retrieving chunks: {str(e)}")
 
 async def stream_response(content: str):
-    """Generate streaming response chunks for OpenAI-compatible streaming with proper paragraph formatting"""
+    """Generate streaming response chunks for OpenAI-compatible streaming"""
     # Check if content starts with retrieved chunks section
     retrieved_section_end = content.find("---\n\n**Generating proposal")
     
@@ -334,20 +301,18 @@ async def stream_response(content: str):
             "choices": [
                 {
                     "index": 0,
-                    "delta": {
-                        "content": retrieved_content
-                    },
+                    "delta": {"content": retrieved_content},
                     "finish_reason": None
                 }
             ]
         }
         yield f"data: {json.dumps(data)}\n\n"
-        await asyncio.sleep(0.1)  # Slightly longer pause after retrieved content
+        await asyncio.sleep(0.1)  # Pause after retrieved content
         
         # Update content to be just the proposal part
         content = proposal_content
     
-    # Split the content by paragraphs first
+    # Split the content by paragraphs
     paragraphs = content.split('\n\n')
     
     for p_idx, paragraph in enumerate(paragraphs):
@@ -375,9 +340,7 @@ async def stream_response(content: str):
                         "choices": [
                             {
                                 "index": 0,
-                                "delta": {
-                                    "content": chunk_text + " "
-                                },
+                                "delta": {"content": chunk_text + " "},
                                 "finish_reason": None
                             }
                         ]
@@ -401,9 +364,7 @@ async def stream_response(content: str):
                     "choices": [
                         {
                             "index": 0,
-                            "delta": {
-                                "content": chunk_text
-                            },
+                            "delta": {"content": chunk_text},
                             "finish_reason": None
                         }
                     ]
@@ -420,9 +381,7 @@ async def stream_response(content: str):
                 "choices": [
                     {
                         "index": 0,
-                        "delta": {
-                            "content": paragraph
-                        },
+                        "delta": {"content": paragraph},
                         "finish_reason": None
                     }
                 ]
@@ -440,9 +399,7 @@ async def stream_response(content: str):
                 "choices": [
                     {
                         "index": 0,
-                        "delta": {
-                            "content": "\n\n"
-                        },
+                        "delta": {"content": "\n\n"},
                         "finish_reason": None
                     }
                 ]
