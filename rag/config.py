@@ -14,14 +14,9 @@ DB_PASSWORD = os.getenv("POSTGRES_PASSWORD", "mypassword")
 
 # Vector DB configuration
 COLLECTION_NAME = os.getenv("COLLECTION_NAME", "document_chunks")
-COLLECTION_ID = None
 
 # Embedding Model configuration
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
-
-# Chunking configuration
-CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "600"))
-CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "50"))
 
 # Database connection pool
 DB_POOL = None
@@ -62,14 +57,14 @@ def release_connection(conn):
 def get_collection_id(conn):
     """Get the UUID of the vector collection."""
     global COLLECTION_ID
-    if COLLECTION_ID is None:
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT uuid FROM langchain_pg_collection 
-            WHERE name = %s;
-        """, (COLLECTION_NAME,))
-        result = cur.fetchone()
-        if result:
-            COLLECTION_ID = result[0]
-        cur.close()
-    return COLLECTION_ID
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT uuid FROM langchain_pg_collection 
+        WHERE name = %s;
+    """, (COLLECTION_NAME,))
+    result = cur.fetchone()
+    cur.close()
+    
+    if result:
+        return result[0]
+    return None

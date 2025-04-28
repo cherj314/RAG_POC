@@ -1,20 +1,17 @@
 FROM postgres:latest
 
-# Install necessary dependencies for building the extension, including git and ca-certificates
+# Install necessary dependencies for building the extension in a single layer
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     postgresql-server-dev-$PG_MAJOR \
     git \
     ca-certificates \
+    && update-ca-certificates \
+    && git clone --depth 1 https://github.com/pgvector/pgvector.git \
+    && cd pgvector \
+    && make install PG_CONFIG=/usr/bin/pg_config \
+    && cd .. \
+    && rm -rf pgvector \
+    && apt-get purge -y build-essential postgresql-server-dev-$PG_MAJOR git \
+    && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
-
-# Try updating ca-certificates explicitly
-RUN update-ca-certificates
-
-# Download and install the pgvector extension
-RUN git clone https://github.com/pgvector/pgvector.git
-WORKDIR /pgvector
-RUN make install PG_CONFIG=/usr/bin/pg_config
-
-# Set the working directory back
-WORKDIR /

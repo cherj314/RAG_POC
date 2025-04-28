@@ -3,6 +3,7 @@ import sys
 import time
 import glob
 import concurrent.futures
+import traceback
 from typing import List
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import TextLoader
@@ -13,19 +14,34 @@ from dotenv import load_dotenv
 from tqdm import tqdm
 from pdf_loader import PDFLoader
 
+# Import our custom semantic text splitter
+try:
+    from semantic_text_splitter import SemanticTextSplitter
+except ImportError:
+    print("⚠️ Could not import SemanticTextSplitter, falling back to RecursiveCharacterTextSplitter")
+    SemanticTextSplitter = None
+
 # Load environment variables
 load_dotenv()
 
 # Environment variables with defaults
 DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_PORT = int(os.getenv("DB_PORT", "5432"))
-DB_NAME = os.getenv("DB_NAME", "vectordb")
-DB_USER = os.getenv("DB_USER", "myuser")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "mypassword")
+DB_NAME = os.getenv("POSTGRES_DB", "vectordb")
+DB_USER = os.getenv("POSTGRES_USER", "myuser")
+DB_PASSWORD = os.getenv("POSTGRES_PASSWORD", "mypassword")
 COLLECTION_NAME = os.getenv("COLLECTION_NAME", "document_chunks")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+
+# Chunking configuration
+CHUNKING_STRATEGY = os.getenv("CHUNKING_STRATEGY", "semantic").lower()
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "600"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "50"))
+MIN_CHUNK_SIZE = int(os.getenv("MIN_CHUNK_SIZE", "200"))
+MAX_CHUNK_SIZE = int(os.getenv("MAX_CHUNK_SIZE", "1000"))
+SEMANTIC_SIMILARITY = float(os.getenv("SEMANTIC_SIMILARITY", "0.75"))
+
+# Processing parameters
 DOCS_DIR = os.getenv("DOCS_DIR", "Documents")
 BATCH_SIZE = int(os.getenv("BATCH_SIZE", "500"))
 MAX_WORKERS = int(os.getenv("MAX_WORKERS", "8"))
@@ -139,6 +155,41 @@ def setup_database():
     
     print(f"✅ Database setup completed in {time.time() - start_time:.2f}s")
 
+def create_text_splitter(file_extension=""):
+    """
+    Create the appropriate text splitter based on configuration.
+    
+    Args:
+        file_extension (str): File extension to adjust parameters if needed
+        
+    Returns:
+        TextSplitter: A TextSplitter instance
+    """
+    # Try to use semantic chunking if selected
+    if CHUNKING_STRATEGY == "semantic" and SemanticTextSplitter is not None:
+        try:
+            print(f"  - Using semantic chunking (similarity threshold: {SEMANTIC_SIMILARITY})")
+            return SemanticTextSplitter(
+                embedding_model=EMBEDDING_MODEL,
+                similarity_threshold=SEMANTIC_SIMILARITY,
+                min_chunk_size=MIN_CHUNK_SIZE,
+                max_chunk_size=MAX_CHUNK_SIZE if file_extension != '.pdf' else MAX_CHUNK_SIZE + 200,
+                chunk_overlap=CHUNK_OVERLAP,
+                verbose=True
+            )
+        except Exception as e:
+            print(f"⚠️ Error initializing semantic chunker: {str(e)}")
+            print("  - Falling back to fixed-size chunking")
+    
+    # Fall back to fixed-size chunking
+    chunk_size = CHUNK_SIZE + 200 if file_extension == '.pdf' else CHUNK_SIZE
+    print(f"  - Using fixed-size chunking (size={chunk_size}, overlap={CHUNK_OVERLAP})")
+    return RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size,
+        chunk_overlap=CHUNK_OVERLAP,
+        separators=["\n\n", "\n", ". ", "! ", "? ", ";", ":", " ", ""]
+    )
+
 def process_document(file_path):
     """Process a single document file, extract metadata, and split into chunks."""
     try:
@@ -167,26 +218,39 @@ def process_document(file_path):
             if not doc.metadata.get("file_id"):
                 doc.metadata["file_id"] = file_id
         
-        # Create text splitter with separators
-        separators = ["\n\n", "\n", ". ", "! ", "? ", ";", ":", " ", ""]
-        chunk_size = CHUNK_SIZE + 200 if file_extension == '.pdf' else CHUNK_SIZE
-        
-        print(f"  - Splitting into chunks (size={chunk_size}, overlap={CHUNK_OVERLAP})...")
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=chunk_size,
-            chunk_overlap=CHUNK_OVERLAP,
-            separators=separators
-        )
+        # Create text splitter (semantic or fixed-size)
+        text_splitter = create_text_splitter(file_extension)
         
         # Split document into chunks
-        chunks = text_splitter.split_documents(document)
-        
-        proc_time = time.time() - start_time
-        print(f"✅ {file_name}: Created {len(chunks)} chunks in {proc_time:.2f}s")
-        
-        return chunks
+        try:
+            chunks = text_splitter.split_documents(document)
+            
+            proc_time = time.time() - start_time
+            print(f"✅ {file_name}: Created {len(chunks)} chunks in {proc_time:.2f}s")
+            
+            return chunks
+        except Exception as e:
+            print(f"❌ Error splitting document {file_name}: {str(e)}")
+            print(f"Detailed error: {traceback.format_exc()}")
+            
+            # Fallback to basic chunking with even more basic splitter
+            try:
+                print("  - Trying fallback chunking method...")
+                basic_splitter = RecursiveCharacterTextSplitter(
+                    chunk_size=CHUNK_SIZE,
+                    chunk_overlap=CHUNK_OVERLAP,
+                    separators=["\n\n", "\n", ". "]
+                )
+                chunks = basic_splitter.split_documents(document)
+                print(f"  - Fallback successful: Created {len(chunks)} chunks")
+                return chunks
+            except Exception as e2:
+                print(f"❌ Fallback chunking also failed: {str(e2)}")
+                return []
+            
     except Exception as e:
         print(f"❌ Error processing {file_path}: {str(e)}")
+        print(f"Detailed error: {traceback.format_exc()}")
         return []
 
 def find_documents():
@@ -276,6 +340,7 @@ def store_chunks_in_db(chunks, embeddings):
             print(f"    ✅ Batch {i}/{len(batches)} stored in {batch_time:.2f}s")
         except Exception as e:
             print(f"    ❌ Error storing batch {i}: {e}")
+            print(f"    Detailed error: {traceback.format_exc()}")
     
     total_time = time.time() - start_time
     print(f"✅ All chunks stored in {total_time:.2f}s")
@@ -283,7 +348,7 @@ def store_chunks_in_db(chunks, embeddings):
 def run_pipeline():
     """Main ingestion pipeline with performance optimizations."""
     print("\n" + "=" * 50)
-    print("📚 Starting optimized document ingestion pipeline")
+    print("📚 Starting document ingestion pipeline")
     print("=" * 50 + "\n")
     
     pipeline_start = time.time()
@@ -308,8 +373,13 @@ def run_pipeline():
     # Initialize embedding model
     print(f"🧠 Initializing embedding model: {EMBEDDING_MODEL}")
     model_start = time.time()
-    embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
-    print(f"✅ Model initialized in {time.time() - model_start:.2f}s")
+    try:
+        embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
+        print(f"✅ Model initialized in {time.time() - model_start:.2f}s")
+    except Exception as e:
+        print(f"❌ Error initializing embedding model: {str(e)}")
+        print(f"Detailed error: {traceback.format_exc()}")
+        return
     
     # Store chunks in vector database
     store_chunks_in_db(all_chunks, embeddings)
@@ -331,4 +401,5 @@ if __name__ == "__main__":
                 time.sleep(retry_delay)
             else:
                 print(f"Fatal error: {e}")
+                print(f"Detailed error: {traceback.format_exc()}")
                 sys.exit(1)

@@ -2,7 +2,7 @@
 
 import os
 import time
-from typing import List, Dict, Any
+from typing import List
 from pypdf import PdfReader
 from langchain.docstore.document import Document
 
@@ -16,11 +16,7 @@ class PDFLoader:
         self.verbose = verbose
     
     def load(self) -> List[Document]:
-        """Load PDF and extract text content with optimization.
-        
-        Returns:
-            List[Document]: A list of Documents split by pages for better processing
-        """
+        """Load PDF and extract text content with optimization."""
         try:
             start_time = time.time()
             file_name = os.path.basename(self.file_path)
