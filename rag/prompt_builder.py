@@ -13,13 +13,12 @@ def build_prompt(context_chunks, user_prompt):
     formatted_chunks = []
     
     for i, (doc, metadata, score) in enumerate(context_chunks, 1):
-        # Clean and normalize the document text
+        # Clean and normalize the document text (limit to 800 chars per chunk)
         clean_doc = ' '.join(doc.split())[:800]
         
         # Include metadata if available
-        meta_str = ""
-        if metadata and isinstance(metadata, dict) and 'file_name' in metadata:
-            meta_str = f" [Source: {metadata['file_name']}]"
+        source = metadata.get('file_name', '') if metadata and isinstance(metadata, dict) else ''
+        meta_str = f" [Source: {source}]" if source else ""
         
         formatted_chunks.append(f"EXAMPLE {i} (RELEVANCE: {score:.2f}){meta_str}: {clean_doc}")
     

@@ -27,13 +27,13 @@ load_dotenv()
 # Environment variables with defaults
 DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_PORT = int(os.getenv("DB_PORT", "5432"))
-DB_NAME = os.getenv("DB_NAME", "vectordb")
-DB_USER = os.getenv("DB_USER", "myuser")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "mypassword")
+DB_NAME = os.getenv("POSTGRES_DB", "vectordb")
+DB_USER = os.getenv("POSTGRES_USER", "myuser")
+DB_PASSWORD = os.getenv("POSTGRES_PASSWORD", "mypassword")
 COLLECTION_NAME = os.getenv("COLLECTION_NAME", "document_chunks")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 
-# Chunking configuration for both strategies
+# Chunking configuration
 CHUNKING_STRATEGY = os.getenv("CHUNKING_STRATEGY", "semantic").lower()
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "600"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "50"))
@@ -41,6 +41,7 @@ MIN_CHUNK_SIZE = int(os.getenv("MIN_CHUNK_SIZE", "200"))
 MAX_CHUNK_SIZE = int(os.getenv("MAX_CHUNK_SIZE", "1000"))
 SEMANTIC_SIMILARITY = float(os.getenv("SEMANTIC_SIMILARITY", "0.75"))
 
+# Processing parameters
 DOCS_DIR = os.getenv("DOCS_DIR", "Documents")
 BATCH_SIZE = int(os.getenv("BATCH_SIZE", "500"))
 MAX_WORKERS = int(os.getenv("MAX_WORKERS", "8"))
@@ -347,7 +348,7 @@ def store_chunks_in_db(chunks, embeddings):
 def run_pipeline():
     """Main ingestion pipeline with performance optimizations."""
     print("\n" + "=" * 50)
-    print("📚 Starting optimized document ingestion pipeline")
+    print("📚 Starting document ingestion pipeline")
     print("=" * 50 + "\n")
     
     pipeline_start = time.time()

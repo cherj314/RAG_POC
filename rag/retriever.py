@@ -1,5 +1,6 @@
 import sys
 import os
+import json
 from sentence_transformers import SentenceTransformer
 
 # Add the parent directory to sys.path
@@ -72,7 +73,6 @@ def search_postgres(query, k=5, similarity_threshold=0.7, debug=False):
             if similarity_score >= similarity_threshold:
                 # If metadata is a string containing JSON, convert it to a dictionary
                 if isinstance(metadata, str) and metadata.startswith('{'):
-                    import json
                     try:
                         metadata = json.loads(metadata)
                     except:

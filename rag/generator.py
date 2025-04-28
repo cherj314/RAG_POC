@@ -37,11 +37,9 @@ def generate_response(prompt, max_tokens=2048, model="gpt-4o", preserve_formatti
         
         # If we need to preserve formatting
         if preserve_formatting:
-            # Ensure paragraph breaks are maintained
             # Replace any instances of 3+ newlines with exactly 2 newlines
             formatted_content = re.sub(r'\n{3,}', '\n\n', raw_content)
             
-            # Ensure all headers and bullet points are properly spaced
             # Add newlines before headers if they don't already have them
             formatted_content = re.sub(r'(?<!\n\n)(#{1,6}\s)', r'\n\n\1', formatted_content)
             
