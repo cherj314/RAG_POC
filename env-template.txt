@@ -39,6 +39,8 @@ MIN_CHUNK_SIZE=200
 MAX_CHUNK_SIZE=1000
 # Semantic similarity threshold (0.0-1.0) for determining chunk boundaries
 SEMANTIC_SIMILARITY=0.75
+# Whether to respect document structure like headings and lists (true/false)
+RESPECT_STRUCTURE=true
 
 # Processing Parameters
 # Batch size for processing documents
