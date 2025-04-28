@@ -23,10 +23,22 @@ COLLECTION_NAME=document_chunks
 EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
 
 # Chunking Configuration
+# Use either "fixed" or "semantic" chunking strategy
+CHUNKING_STRATEGY=semantic
+
+# Fixed-size chunking parameters (used if CHUNKING_STRATEGY=fixed)
 # Size of text chunks for vectorization
 CHUNK_SIZE=600
 # Overlap between consecutive chunks
 CHUNK_OVERLAP=50
+
+# Semantic chunking parameters (used if CHUNKING_STRATEGY=semantic)
+# Minimum size of chunks
+MIN_CHUNK_SIZE=200
+# Maximum size of chunks
+MAX_CHUNK_SIZE=1000
+# Semantic similarity threshold (0.0-1.0) for determining chunk boundaries
+SEMANTIC_SIMILARITY=0.75
 
 # Processing Parameters
 # Batch size for processing documents

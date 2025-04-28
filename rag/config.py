@@ -20,8 +20,14 @@ COLLECTION_ID = None
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 
 # Chunking configuration
+CHUNKING_STRATEGY = os.getenv("CHUNKING_STRATEGY", "semantic").lower()
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "600"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "50"))
+
+# Semantic chunking configuration
+MIN_CHUNK_SIZE = int(os.getenv("MIN_CHUNK_SIZE", "200"))
+MAX_CHUNK_SIZE = int(os.getenv("MAX_CHUNK_SIZE", "1000"))
+SEMANTIC_SIMILARITY = float(os.getenv("SEMANTIC_SIMILARITY", "0.75"))
 
 # Database connection pool
 DB_POOL = None
