@@ -9,38 +9,37 @@ def build_prompt(context_chunks, user_prompt):
     Returns:
         str: A formatted prompt for the LLM
     """
-    # Format each context chunk
+    # Format each context chunk with more detailed source information
     formatted_chunks = []
     
     for i, (doc, metadata, score) in enumerate(context_chunks, 1):
-        # Clean and normalize the document text (limit to 800 chars per chunk)
-        clean_doc = ' '.join(doc.split())[:800]
+        # Clean and normalize the document text
+        clean_doc = doc.strip()
         
-        # Include metadata if available
+        # Include detailed metadata if available
         source = metadata.get('file_name', '') if metadata and isinstance(metadata, dict) else ''
-        meta_str = f" [Source: {source}]" if source else ""
+        page_info = f", Page {metadata.get('page_num', '')}" if metadata and metadata.get('page_num') else ''
+        section_info = f", Section: {metadata.get('current_section', '')}" if metadata and metadata.get('current_section') else ''
         
-        formatted_chunks.append(f"EXAMPLE {i} (RELEVANCE: {score:.2f}){meta_str}: {clean_doc}")
+        # Combine metadata into a single string
+        meta_str = f"[Source: {source}{page_info}{section_info}]" if source else ""
+        
+        formatted_chunks.append(f"PASSAGE {i} (RELEVANCE: {score:.2f}) {meta_str}:\n{clean_doc}")
     
-    # Join the formatted chunks
-    context = " || ".join(formatted_chunks)
+    # Join the formatted chunks with clear separation
+    context = "\n\n---\n\n".join(formatted_chunks)
     
-    # Create the complete prompt
+    # Create the optimized Harry Potter prompt
     prompt = (
-        "SYSTEM: You are an expert software proposal writer for a professional software development company. "
-        "Create a comprehensive, persuasive proposal based on the user's request and the provided examples. "
-        f"RETRIEVED CONTEXT: {context} "
-        f"USER REQUEST: {user_prompt} "
-        "TASK: Generate a complete software proposal that includes: "
-        "1) Executive Summary, "
-        "2) Project Understanding, "
-        "3) Technical Approach, "
-        "4) Deliverables, "
-        "5) Timeline, "
-        "6) Team Structure, "
-        "7) Pricing, and "
-        "8) Next Steps. "
-        "Make the proposal compelling, technically sound, and tailored to the client's specific needs."
+        "SYSTEM: You are a helpful assistant and literary expert. "
+        "Answer the question based EXCLUSIVELY on the provided passages from the books. "
+        "For each statement in your answer, cite the specific passage number in brackets, like [PASSAGE 2]. "
+        "If the information isn't in the provided passages, admit this clearly instead of making up information. "
+        "If directly quoting the text, use quotation marks and cite the passage. "
+        "Your answers should be comprehensive yet concise, focused on directly addressing the question with evidence from the text.\n\n"
+        f"RETRIEVED PASSAGES:\n\n{context}\n\n"
+        f"QUESTION: {user_prompt}\n\n"
+        "ANSWER:"
     )
     
     return prompt

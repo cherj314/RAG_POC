@@ -59,29 +59,84 @@ def setup_database():
     
     engine = create_engine(CONNECTION_STRING)
     
-    # Split operations into regular operations (can be in transaction) and 
-    # system operations (must be outside transaction)
+    # First handle vector dimension update for the new embedding model
+    # This needs to happen before other operations
+    vector_dim_operations = [
+    # Drop existing index first if it exists
+    """
+    DO $$
+    BEGIN
+        IF EXISTS (
+            SELECT 1
+            FROM pg_indexes
+            WHERE indexname = 'langchain_pg_embedding_vector_idx'
+        ) THEN
+            DROP INDEX langchain_pg_embedding_vector_idx;
+        END IF;
+    END
+    $$;
+    """,
+    
+    # Drop the table if it exists to avoid dimension mismatch
+    """
+    DROP TABLE IF EXISTS langchain_pg_embedding;
+    """,
+    
+    # Create the table with the correct dimension based on model
+    """
+    DO $$
+    DECLARE
+        vector_dim INT;
+    BEGIN
+        -- Set vector dimension based on model name
+        IF '{}' LIKE '%mpnet%' THEN
+            vector_dim := 768;
+        ELSE
+            vector_dim := 384;
+        END IF;
+        
+        -- Log the dimension being used
+        RAISE NOTICE 'Setting vector dimension to %', vector_dim;
+        
+        -- Create the collection table if needed
+        IF NOT EXISTS (
+            SELECT FROM information_schema.tables 
+            WHERE table_schema = 'public' 
+            AND table_name = 'langchain_pg_collection'
+        ) THEN
+            CREATE TABLE langchain_pg_collection (
+                uuid UUID PRIMARY KEY,
+                name TEXT NOT NULL,
+                cmetadata JSONB
+            );
+        END IF;
+    END;
+    $$;
+    """.format(EMBEDDING_MODEL)  # Use format to insert the model name directly
+    ]
+    
+    # Execute the vector dimension update operations
+    for operation in vector_dim_operations:
+        try:
+            with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
+                connection.execute(text(operation))
+                print(f"  - Executed vector dimension update")
+        except Exception as e:
+            print(f"  - Warning: Vector dimension update operation failed: {str(e)}")
+    
+    # Try to set the model name as a session variable
+    try:
+        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
+            connection.execute(text(f"SET app.embedding_model = '{EMBEDDING_MODEL}'"))
+    except:
+        print("  - Note: Could not set model name as session variable")
+    
+    # Regular database operations
     regular_operations = [
         # Enable pgvector extension
         "CREATE EXTENSION IF NOT EXISTS vector",
         
-        # Update embedding table if it exists
-        """
-        DO $$
-        BEGIN
-            IF EXISTS (
-                SELECT FROM information_schema.tables 
-                WHERE table_schema = 'public' 
-                AND table_name = 'langchain_pg_embedding'
-            ) THEN
-                ALTER TABLE langchain_pg_embedding
-                ALTER COLUMN embedding TYPE vector(384);
-            END IF;
-        END
-        $$;
-        """,
-        
-        # Create an IVFFlat index if needed
+        # Create an IVFFlat index if needed (with the right dimensions)
         """
         DO $$
         BEGIN
