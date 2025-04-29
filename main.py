@@ -43,7 +43,7 @@ def generate_proposal(user_input, show_retrieval_only=False):
     
     # Step 1: Retrieve relevant chunks using vector similarity
     print("🔍 Searching for relevant content...")
-    chunks = search_postgres(user_input, k=5, similarity_threshold=0.5)
+    chunks = search_postgres(user_input, k=5, similarity_threshold=0.3)
     
     # Step 2: Handle case where no relevant content found
     if not chunks:

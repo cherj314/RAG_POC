@@ -1,6 +1,6 @@
 # RAGbot - Proposal Generation Assistant
 
-A lightweight Retrieval-Augmented Generation system for creating customized software proposals using a vector database of historical documents.
+A lightweight Retrieval-Augmented Generation system for answering questions about harry potter using a vector database of embeddings from harry potter books.
 
 ## Requirements
 
@@ -25,6 +25,11 @@ A lightweight Retrieval-Augmented Generation system for creating customized soft
    - Open http://localhost:3000
    - Login with the token from your .env file
    - Add a new conection to http://localhost:8000
+
+4. **To remove all docker info for full restart**
+   ```bash
+   docker system prune -a --volumes -f
+   ```
 
 ## Adding Documents
 

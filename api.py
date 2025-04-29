@@ -144,13 +144,30 @@ async def generate_proposal(request: ProposalRequest):
         raise HTTPException(status_code=500, detail=f"Error generating proposal: {str(e)}")
 
 @app.post("/chat/completions")
-async def chat_completions_no_prefix(request: ChatRequest, raw_request: Request):
+async def chat_completions_no_prefix(request: Request):
     """OpenAI-compatible chat completions endpoint (without /api prefix)"""
-    return await chat_completions(request, raw_request)
+    # Parse the request body manually to avoid validation errors
+    try:
+        body = await request.json()
+        chat_request = ChatRequest(**body)
+        return await process_chat_completion(chat_request)
+    except Exception as e:
+        print(f"Error processing chat request: {str(e)}")
+        return format_error_response(str(e))
 
 @app.post("/api/chat/completions")
-async def chat_completions(request: ChatRequest, raw_request: Request):
+async def chat_completions(request: Request):
     """OpenAI-compatible chat completions endpoint for OpenWebUI integration"""
+    try:
+        body = await request.json()
+        chat_request = ChatRequest(**body)
+        return await process_chat_completion(chat_request)
+    except Exception as e:
+        print(f"Error processing chat request: {str(e)}")
+        return format_error_response(str(e))
+
+async def process_chat_completion(request: ChatRequest):
+    """Process a chat completion request"""
     try:
         ensure_initialized()
         
@@ -158,13 +175,13 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
         last_user_message = next((msg.content for msg in reversed(request.messages) if msg.role == "user"), None)
         
         if not last_user_message:
-            raise HTTPException(status_code=400, detail="No user message found in the request")
+            return format_error_response("No user message found in the request")
         
         # Process the query using our RAG pipeline
         chunks = search_postgres(
             last_user_message,
             k=5,
-            similarity_threshold=0.5
+            similarity_threshold=0.3
         )
         
         # Format retrieved chunks
@@ -197,11 +214,11 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
                 "❌ **No relevant information found in my knowledge base.**\n\n"
                 "I'm sorry, but I couldn't find any relevant information in my knowledge base "
                 "about your query. Could you please rephrase your question or ask about something "
-                "related to software development proposals, which is my area of expertise?"
+                "related to Harry Potter, which is my area of expertise?"
             ) if show_retrieved else (
                 "I'm sorry, but I couldn't find any relevant information in my knowledge base "
                 "about your query. Could you please rephrase your question or ask about something "
-                "related to software development proposals, which is my area of expertise?"
+                "related to Harry Potter, which is my area of expertise?"
             )
         
         # Format as OpenAI API response
@@ -234,28 +251,34 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
         return response
     
     except Exception as e:
-        # Return a proper error response
-        return {
-            "id": f"chatcmpl-error-{int(time.time())}",
-            "object": "chat.completion",
-            "created": int(time.time()),
-            "model": request.model or "ragbot",
-            "choices": [
-                {
-                    "index": 0,
-                    "message": {
-                        "role": "assistant",
-                        "content": f"I encountered an error processing your request: {str(e)}. The RAGbot system administrators have been notified."
-                    },
-                    "finish_reason": "stop"
-                }
-            ],
-            "usage": {
-                "prompt_tokens": sum(len(m.content.split()) for m in request.messages),
-                "completion_tokens": 0,
-                "total_tokens": sum(len(m.content.split()) for m in request.messages)
+        print(f"Error in process_chat_completion: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return format_error_response(f"I encountered an error processing your request: {str(e)}")
+
+def format_error_response(error_message):
+    """Format a proper error response in OpenAI format"""
+    return {
+        "id": f"chatcmpl-error-{int(time.time())}",
+        "object": "chat.completion",
+        "created": int(time.time()),
+        "model": "ragbot",
+        "choices": [
+            {
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": f"I encountered an error processing your request: {error_message}. The RAGbot system administrators have been notified."
+                },
+                "finish_reason": "stop"
             }
+        ],
+        "usage": {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0
         }
+    }
 
 # Endpoint to get only retrieved chunks
 @app.post("/api/retrieve-chunks")
