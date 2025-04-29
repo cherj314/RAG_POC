@@ -28,6 +28,7 @@ A lightweight Retrieval-Augmented Generation system for answering questions abou
 
 4. **To remove all docker info for full restart**
    ```bash
+   docker compose down -v
    docker system prune -a --volumes -f
    ```
 
