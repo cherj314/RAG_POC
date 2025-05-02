@@ -43,10 +43,17 @@ services:
       - COLLECTION_NAME=${COLLECTION_NAME:-document_chunks}
       - CHUNK_SIZE=${CHUNK_SIZE:-600}
       - CHUNK_OVERLAP=${CHUNK_OVERLAP:-50}
+      - DEFAULT_MODEL_TYPE=${DEFAULT_MODEL_TYPE:-openai}
+      - AVAILABLE_MODEL_TYPES=${AVAILABLE_MODEL_TYPES:-openai,ollama}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-tinyllama}
+      - OLLAMA_BASE_URL=http://ollama:11434
       - PYTHONUNBUFFERED=1
     depends_on:
       postgres:
         condition: service_healthy
+      ollama:
+        condition: service_started
     volumes:
       - ./Documents:/app/Documents
       - ./.env:/app/.env
@@ -99,6 +106,20 @@ services:
           cpus: '4'
           memory: 4G
 
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    networks:
+      - ragbot-network
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 8G
+
   openwebui:
     image: ghcr.io/open-webui/open-webui:main
     ports:
@@ -128,3 +149,4 @@ networks:
 volumes:
   pgdata:
   openwebui-data:
+  ollama-data:
