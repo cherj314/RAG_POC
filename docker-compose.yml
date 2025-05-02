@@ -18,7 +18,6 @@ services:
       retries: 5
     networks:
       - ragbot-network
-    # Optimize resource constraints
     deploy:
       resources:
         limits:
@@ -53,7 +52,7 @@ services:
       postgres:
         condition: service_healthy
       ollama:
-        condition: service_started
+        condition: service_healthy
     volumes:
       - ./Documents:/app/Documents
       - ./.env:/app/.env
@@ -107,7 +106,11 @@ services:
           memory: 4G
 
   ollama:
-    image: ollama/ollama:latest
+    build:
+      context: .
+      dockerfile: Dockerfile-ollama
+    environment:
+      - MODEL_NAME=${OLLAMA_MODEL:-tinyllama}
     ports:
       - "${OLLAMA_PORT:-11434}:11434"
     volumes:
@@ -118,7 +121,7 @@ services:
       resources:
         limits:
           cpus: '4'
-          memory: 8G
+          memory: 12G
 
   openwebui:
     image: ghcr.io/open-webui/open-webui:main
@@ -133,7 +136,8 @@ services:
     volumes:
       - openwebui-data:/app/backend/data
     depends_on:
-      - ragbot-api
+      ragbot-api:
+        condition: service_healthy
     networks:
       - ragbot-network
     deploy:
