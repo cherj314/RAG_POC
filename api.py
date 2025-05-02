@@ -166,8 +166,10 @@ async def chat_completions(request: Request):
         print(f"Error processing chat request: {str(e)}")
         return format_error_response(str(e))
 
+# Update the process_chat_completion function to support model selection
+
 async def process_chat_completion(request: ChatRequest):
-    """Process a chat completion request"""
+    """Process a chat completion request with fixed model selection"""
     try:
         ensure_initialized()
         
@@ -188,6 +190,20 @@ async def process_chat_completion(request: ChatRequest):
         retrieved_chunks = format_retrieved_chunks(chunks)
         show_retrieved = getattr(request, 'show_retrieved', True)
         
+        # Get model information
+        requested_model = request.model or "ragbot"
+        temperature = request.temperature or 0.7
+        max_tokens = request.max_tokens or 2048
+        
+        # Import module inside function to avoid circular imports
+        from rag.generator import generate_response, MODEL_TYPE, MODEL_NAME
+        
+        # Use the default model from environment variables
+        # This fixes the issue where "model" was being used instead of "tinyllama"
+        model_name = os.getenv("OLLAMA_MODEL", "tinyllama") if MODEL_TYPE == "ollama" else MODEL_NAME
+        
+        print(f"Using model: {model_name} (type: {MODEL_TYPE})")
+        
         # Generate text based on retrieved chunks
         if chunks:
             prompt = build_prompt(chunks, last_user_message)
@@ -203,11 +219,25 @@ async def process_chat_completion(request: ChatRequest):
                     retrieved_content += f"{chunk_text}\n"
                 retrieved_content += "---\n\n**Generating proposal based on these sources...**\n\n"
                 
-                generated_response = generate_response(prompt, max_tokens=request.max_tokens, preserve_formatting=True)
+                # Generate the response
+                generated_response = generate_response(
+                    prompt=prompt, 
+                    max_tokens=max_tokens, 
+                    model=model_name, 
+                    temperature=temperature,
+                    preserve_formatting=True
+                )
+                
                 generated_text = retrieved_content + generated_response
             else:
                 # Just generate the response without showing chunks
-                generated_text = generate_response(prompt, max_tokens=request.max_tokens, preserve_formatting=True)
+                generated_text = generate_response(
+                    prompt=prompt, 
+                    max_tokens=max_tokens, 
+                    model=model_name, 
+                    temperature=temperature,
+                    preserve_formatting=True
+                )
         else:
             # No relevant chunks found
             generated_text = (
@@ -226,7 +256,7 @@ async def process_chat_completion(request: ChatRequest):
             "id": f"chatcmpl-{int(time.time())}",
             "object": "chat.completion",
             "created": int(time.time()),
-            "model": request.model or "ragbot",
+            "model": requested_model,
             "choices": [
                 {
                     "index": 0,
@@ -452,34 +482,97 @@ async def list_models_no_prefix():
     """OpenAI-compatible models endpoint (without /api prefix)"""
     return await list_models()
 
+# Update the models endpoint in api.py to include Ollama models
+# Replace the existing list_models functions with this code
+
+# Replace the list_models functions in api.py with this simplified version
+
+@app.get("/models")
+async def list_models_no_prefix():
+    """OpenAI-compatible models endpoint (without /api prefix)"""
+    return await list_models()
+
 @app.get("/api/models")
 async def list_models():
-    """OpenAI-compatible models endpoint"""
-    return {
-        "object": "list",
-        "data": [
-            {
-                "id": "ragbot",
+    """OpenAI-compatible models endpoint that includes both OpenAI and Ollama models"""
+    try:
+        from rag.generator import list_available_models, MODEL_TYPE
+        
+        # Get available models
+        models_list = list_available_models()
+        
+        # Convert to OpenAI-compatible format
+        openai_models = []
+        for model in models_list:
+            model_id = model["id"]
+            model_type = model["type"]
+            
+            openai_models.append({
+                "id": model_id,
                 "object": "model",
                 "created": int(time.time()),
-                "owned_by": "organization-owner",
+                "owned_by": "organization-owner" if model_type == "openai" else "ollama",
                 "permission": [],
-                "root": "ragbot",
+                "root": model_type,
                 "parent": None
-            }
-        ]
-    }
+            })
+        
+        # Always include the default "ragbot" model for backward compatibility
+        openai_models.append({
+            "id": "ragbot",
+            "object": "model",
+            "created": int(time.time()),
+            "owned_by": "organization-owner",
+            "permission": [],
+            "root": "ragbot",
+            "parent": None
+        })
+        
+        return {
+            "object": "list",
+            "data": openai_models
+        }
+        
+    except Exception as e:
+        print(f"Error in list_models: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        
+        # Fallback response with just the ragbot model
+        return {
+            "object": "list",
+            "data": [
+                {
+                    "id": "ragbot",
+                    "object": "model",
+                    "created": int(time.time()),
+                    "owned_by": "organization-owner",
+                    "permission": [],
+                    "root": "ragbot",
+                    "parent": None
+                }
+            ]
+        }
 
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint"""
     from rag.config import DB_POOL
+    import os
+    
+    # Get model configuration
+    model_type = os.getenv("MODEL_TYPE", "openai")
+    model_name = os.getenv("MODEL_NAME", "gpt-4o")
     
     health_status = {
         "status": "ok" if is_initialized else "initializing",
         "database": "connected" if DB_POOL is not None else "disconnected",
         "embedding_model": "loaded" if get_embed_model() is not None else "not_loaded",
-        "timestamp": int(time.time())
+        "timestamp": int(time.time()),
+        "llm_config": {
+            "model_type": model_type,
+            "model_name": model_name
+        }
     }
     
     # Test database connection
@@ -493,6 +586,28 @@ async def health_check():
                 health_status["database_test"] = "failed"
         except Exception as e:
             health_status["database_test"] = f"error: {str(e)}"
+    
+    # Simple check for Ollama if configured to use it
+    if model_type == "ollama":
+        try:
+            import requests
+            ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
+            try:
+                response = requests.get(f"{ollama_base_url}/api/version", timeout=2)
+                health_status["ollama"] = {
+                    "status": "ok" if response.status_code == 200 else "error",
+                    "details": "Connected to Ollama API" if response.status_code == 200 else f"HTTP {response.status_code}"
+                }
+            except Exception as e:
+                health_status["ollama"] = {
+                    "status": "error",
+                    "details": f"Connection error: {str(e)}"
+                }
+        except ImportError:
+            health_status["ollama"] = {
+                "status": "error",
+                "details": "Requests module not available"
+            }
     
     return health_status
 
