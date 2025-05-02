@@ -18,12 +18,31 @@ services:
       retries: 5
     networks:
       - ragbot-network
-    # Optimize resource constraints
     deploy:
       resources:
         limits:
           cpus: '1'
           memory: 1G
+
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama-models:/root/.ollama
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    networks:
+      - ragbot-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/version"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
 
   ragbot-api:
     build:
@@ -43,6 +62,9 @@ services:
       - COLLECTION_NAME=${COLLECTION_NAME:-document_chunks}
       - CHUNK_SIZE=${CHUNK_SIZE:-600}
       - CHUNK_OVERLAP=${CHUNK_OVERLAP:-50}
+      - MODEL_TYPE=${MODEL_TYPE:-openai}
+      - MODEL_NAME=${MODEL_NAME:-gpt-4o}
+      - OLLAMA_BASE_URL=http://ollama:11434
       - PYTHONUNBUFFERED=1
     depends_on:
       postgres:
@@ -54,12 +76,6 @@ services:
     networks:
       - ragbot-network
     command: uvicorn api:app --host 0.0.0.0 --port 8000
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
     deploy:
       resources:
         limits:
@@ -67,7 +83,6 @@ services:
           memory: 2G
 
   ragbot-ingest:
-    # Reuse the API image instead of rebuilding
     image: ragbot-api-image
     environment:
       - DB_HOST=postgres
@@ -128,3 +143,4 @@ networks:
 volumes:
   pgdata:
   openwebui-data:
+  ollama-models:

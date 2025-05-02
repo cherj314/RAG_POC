@@ -1,8 +1,7 @@
 # RAGbot Environment Configuration Template
 # Rename this file to .env and fill in your specific values
 
-# API Keys
-# Required: Your OpenAI API key for generating responses
+# API Keys (only needed if using OpenAI models)
 OPENAI_API_KEY=your_openai_api_key_here
 
 # Database Configuration (used by both local Python and Docker)
@@ -18,9 +17,24 @@ DB_PASSWORD=your_secure_password_here
 # Vector DB Configuration
 COLLECTION_NAME=document_chunks
 
-# Model Configuration
+# Embedding Model Configuration
 # Embedding model to use for document vectorization
 EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+
+# LLM Configuration
+# Choose between "openai" or "ollama" model types
+MODEL_TYPE=openai
+# Model name to use (for OpenAI: "gpt-4o", "gpt-3.5-turbo", or for ollama: "tinyllama")
+MODEL_NAME=gpt-4o
+# Temperature for generation (0.0-1.0)
+TEMPERATURE=0.3
+# Maximum tokens to generate
+MAX_TOKENS=2048
+
+# Ollama Configuration (only used if MODEL_TYPE=ollama)
+OLLAMA_BASE_URL=http://ollama:11434
+OLLAMA_MODEL=tinyllama
+OLLAMA_PORT=11434
 
 # Chunking Configuration
 # Use either "fixed" or "semantic" chunking strategy
@@ -60,7 +74,3 @@ API_PORT=8000
 # Authentication token for the web interface
 WEBUI_AUTH_TOKEN=your_secure_token_here
 WEBUI_PORT=3000
-
-# Optional: Llama CLI Configuration (only needed if using local Llama models)
-# LLAMA_CLI_PATH=/path/to/llama/executable
-# LLAMA_MODEL_PATH=/path/to/llama/model.gguf
