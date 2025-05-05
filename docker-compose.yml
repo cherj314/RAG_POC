@@ -117,6 +117,12 @@ services:
       - ollama-data:/root/.ollama
     networks:
       - ragbot-network
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/healthcheck.sh"]
+      interval: 10s       
+      timeout: 5s        
+      retries: 5         
+      start_period: 120s  # Increased significantly from 60s to allow more download time
     deploy:
       resources:
         limits:

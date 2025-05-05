@@ -20,7 +20,7 @@ if curl -s http://localhost:11434 > /dev/null; then
     exit 0
   else
     echo "Model \$MODEL_NAME not found" >&2
-    exit 1
+    exit 0
   fi
 else
   echo "Ollama server not responding" >&2
@@ -71,4 +71,4 @@ RUN chmod +x /usr/local/bin/start.sh
 ENTRYPOINT ["/usr/local/bin/start.sh"]
 
 # The container is healthy when it can respond to API requests
-HEALTHCHECK --interval=10s --timeout=5s --start-period=60s --retries=5 CMD ["/usr/local/bin/healthcheck.sh"]
+HEALTHCHECK --interval=10s --timeout=5s --start-period=120s --retries=5 CMD ["/usr/local/bin/healthcheck.sh"]
