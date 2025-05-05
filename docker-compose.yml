@@ -51,8 +51,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      ollama:
-        condition: service_healthy
     volumes:
       - ./Documents:/app/Documents
       - ./.env:/app/.env
