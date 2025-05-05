@@ -71,4 +71,4 @@ RUN chmod +x /usr/local/bin/start.sh
 ENTRYPOINT ["/usr/local/bin/start.sh"]
 
 # The container is healthy when it can respond to API requests
-HEALTHCHECK --interval=10s --timeout=5s --start-period=120s --retries=5 CMD ["/usr/local/bin/healthcheck.sh"]
+HEALTHCHECK --interval=20s --timeout=10s --start-period=120s --retries=5 CMD ["/usr/local/bin/healthcheck.sh"]

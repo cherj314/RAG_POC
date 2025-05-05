@@ -2,7 +2,7 @@ services:
   postgres:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: docker/Dockerfile
     ports:
       - "${DB_PORT:-5432}:5432"
     environment:
@@ -27,7 +27,7 @@ services:
   ragbot-api:
     build:
       context: .
-      dockerfile: Dockerfile-api
+      dockerfile: docker/Dockerfile-api
     image: ragbot-api-image
     ports:
       - "${API_PORT:-8000}:8000"
@@ -108,7 +108,7 @@ services:
   ollama:
     build:
       context: .
-      dockerfile: Dockerfile-ollama
+      dockerfile: docker/Dockerfile-ollama
     environment:
       - MODEL_NAME=${OLLAMA_MODEL:-tinyllama}
     ports:
@@ -117,12 +117,6 @@ services:
       - ollama-data:/root/.ollama
     networks:
       - ragbot-network
-    healthcheck:
-      test: ["CMD", "/usr/local/bin/healthcheck.sh"]
-      interval: 10s       
-      timeout: 5s        
-      retries: 5         
-      start_period: 120s  # Increased significantly from 60s to allow more download time
     deploy:
       resources:
         limits:
