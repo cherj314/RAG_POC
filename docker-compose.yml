@@ -133,6 +133,7 @@ services:
       - CUSTOM_API_BASE_URL=http://ragbot-api:8000
       - CUSTOM_API_CONTEXT_SIZE=4096
       - API_BACKEND=custom
+      - CORS_ALLOW_ORIGIN=http://localhost:${WEBUI_PORT:-3000}
     volumes:
       - openwebui-data:/app/backend/data
     depends_on:

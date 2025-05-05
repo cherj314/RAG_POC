@@ -10,7 +10,7 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.docstore.document import Document
 from langchain_community.document_loaders import TextLoader
 from langchain_community.vectorstores.pgvector import PGVector
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
 from tqdm import tqdm
@@ -33,7 +33,7 @@ DB_NAME = os.getenv("POSTGRES_DB", "vectordb")
 DB_USER = os.getenv("POSTGRES_USER", "myuser")
 DB_PASSWORD = os.getenv("POSTGRES_PASSWORD", "mypassword")
 COLLECTION_NAME = os.getenv("COLLECTION_NAME", "document_chunks")
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-mpnet-base-v2")
 
 # Chunking configuration
 CHUNKING_STRATEGY = os.getenv("CHUNKING_STRATEGY", "semantic").lower()

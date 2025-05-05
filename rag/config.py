@@ -16,7 +16,7 @@ DB_PASSWORD = os.getenv("POSTGRES_PASSWORD", "mypassword")
 COLLECTION_NAME = os.getenv("COLLECTION_NAME", "document_chunks")
 
 # Embedding Model configuration
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-mpnet-base-v2")
 
 # Database connection pool
 DB_POOL = None
