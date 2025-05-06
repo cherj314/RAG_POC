@@ -364,15 +364,34 @@ async def retrieve_chunks(request: ProposalRequest):
 
 async def stream_response(content: str):
     """Generate streaming response chunks for OpenAI-compatible streaming"""
-    # Check if content starts with retrieved chunks section
-    retrieved_section_end = content.find("---\n\n**Generating proposal")
+    # Split the content into manageable chunks
+    chunks = []
     
-    # If there's a retrieved section, stream it as a block first
-    if retrieved_section_end > 0:
-        retrieved_content = content[:retrieved_section_end + 4]  # Include the "---\n\n"
-        proposal_content = content[retrieved_section_end + 4:]
-        
-        # Stream the retrieved content as a block
+    # Simple paragraph splitting
+    paragraphs = content.split('\n\n')
+    
+    for paragraph in paragraphs:
+        # For very long paragraphs, split them into sentences
+        if len(paragraph) > 300:
+            sentences = paragraph.replace('\n', ' ').split('. ')
+            current_text = ""
+            
+            for sentence in sentences:
+                sentence = sentence + ('.' if not sentence.endswith('.') else '')
+                if len(current_text) + len(sentence) > 200:
+                    chunks.append(current_text)
+                    current_text = sentence
+                else:
+                    current_text += " " + sentence if current_text else sentence
+                    
+            if current_text:
+                chunks.append(current_text)
+        else:
+            chunks.append(paragraph)
+    
+    # Stream the chunks
+    for i, chunk in enumerate(chunks):
+        # Create message data
         data = {
             "id": f"chatcmpl-{int(time.time())}",
             "object": "chat.completion.chunk",
@@ -381,111 +400,33 @@ async def stream_response(content: str):
             "choices": [
                 {
                     "index": 0,
-                    "delta": {"content": retrieved_content},
+                    "delta": {"content": chunk},
                     "finish_reason": None
                 }
             ]
         }
+        
+        # Send the chunk
         yield f"data: {json.dumps(data)}\n\n"
-        await asyncio.sleep(0.1)  # Pause after retrieved content
         
-        # Update content to be just the proposal part
-        content = proposal_content
-    
-    # Split the content by paragraphs
-    paragraphs = content.split('\n\n')
-    
-    for p_idx, paragraph in enumerate(paragraphs):
-        # For very long paragraphs, split them further
-        if len(paragraph) > 300:
-            # Split into sentences
-            sentences = paragraph.replace('\n', ' ').split('. ')
-            current_chunk = []
-            current_length = 0
-            
-            for sentence in sentences:
-                if not sentence.endswith('.'):
-                    sentence += '.'
-                
-                sentence_length = len(sentence)
-                
-                # If this sentence would make the chunk too long, send the current chunk
-                if current_length + sentence_length > 200 and current_chunk:
-                    chunk_text = ' '.join(current_chunk)
-                    data = {
-                        "id": f"chatcmpl-{int(time.time())}",
-                        "object": "chat.completion.chunk",
-                        "created": int(time.time()),
-                        "model": "ragbot",
-                        "choices": [
-                            {
-                                "index": 0,
-                                "delta": {"content": chunk_text + " "},
-                                "finish_reason": None
-                            }
-                        ]
-                    }
-                    yield f"data: {json.dumps(data)}\n\n"
-                    await asyncio.sleep(0.05)
-                    current_chunk = []
-                    current_length = 0
-                
-                current_chunk.append(sentence)
-                current_length += sentence_length
-            
-            # Send any remaining content in the current chunk
-            if current_chunk:
-                chunk_text = ' '.join(current_chunk)
-                data = {
-                    "id": f"chatcmpl-{int(time.time())}",
-                    "object": "chat.completion.chunk",
-                    "created": int(time.time()),
-                    "model": "ragbot",
-                    "choices": [
-                        {
-                            "index": 0,
-                            "delta": {"content": chunk_text},
-                            "finish_reason": None
-                        }
-                    ]
-                }
-                yield f"data: {json.dumps(data)}\n\n"
-                await asyncio.sleep(0.05)
-        else:
-            # Short paragraph - send as is
-            data = {
-                "id": f"chatcmpl-{int(time.time())}",
-                "object": "chat.completion.chunk",
-                "created": int(time.time()),
-                "model": "ragbot",
-                "choices": [
+        # Add paragraph breaks between chunks
+        if i < len(chunks) - 1:
+            yield f"data: {json.dumps({
+                'id': f'chatcmpl-{int(time.time())}',
+                'object': 'chat.completion.chunk',
+                'created': int(time.time()),
+                'model': 'ragbot',
+                'choices': [
                     {
-                        "index": 0,
-                        "delta": {"content": paragraph},
-                        "finish_reason": None
+                        'index': 0,
+                        'delta': {'content': '\n\n'},
+                        'finish_reason': None
                     }
                 ]
-            }
-            yield f"data: {json.dumps(data)}\n\n"
-            await asyncio.sleep(0.05)
+            })}\n\n"
         
-        # Add paragraph breaks between paragraphs, but not after the last one
-        if p_idx < len(paragraphs) - 1:
-            data = {
-                "id": f"chatcmpl-{int(time.time())}",
-                "object": "chat.completion.chunk",
-                "created": int(time.time()),
-                "model": "ragbot",
-                "choices": [
-                    {
-                        "index": 0,
-                        "delta": {"content": "\n\n"},
-                        "finish_reason": None
-                    }
-                ]
-            }
-            yield f"data: {json.dumps(data)}\n\n"
-            await asyncio.sleep(0.02)  # Shorter pause for paragraph breaks
+        # Add small delay between chunks
+        await asyncio.sleep(0.05)
     
     # End the stream
     data = {
