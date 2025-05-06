@@ -18,7 +18,8 @@ COPY requirements.txt .
 # Install Python dependencies more efficiently
 # Pin versions to avoid unnecessary upgrades and use --no-cache-dir
 RUN pip install --no-cache-dir -r requirements.txt \
-    && pip install --no-cache-dir pypdf>=3.15.0 nltk>=3.8.1
+    && pip install --no-cache-dir pypdf>=3.15.0 nltk>=3.8.1 \
+    && pip install --no-cache-dir huggingface_hub[hf_xet]
 
 # Download only essential NLTK data instead of all data
 # This will significantly reduce build time

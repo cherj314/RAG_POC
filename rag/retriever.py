@@ -1,8 +1,5 @@
-import sys
-import os
-import json
-import numpy as np
-from typing import List, Tuple, Dict, Any, Optional
+import sys, os, json, numpy as np
+from typing import List, Tuple
 from sentence_transformers import SentenceTransformer
 
 # Add the parent directory to sys.path

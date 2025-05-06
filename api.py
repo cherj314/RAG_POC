@@ -1,10 +1,5 @@
-import sys
-import os
-import uvicorn
-import time
-import json
-import asyncio
-from typing import List, Dict, Any, Optional
+import sys, os, uvicorn, time, json, asyncio
+from typing import List, Optional
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -16,7 +11,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 # Import project modules
 from rag.retriever import search_postgres, get_embed_model
 from rag.prompt_builder import build_prompt
-from rag.generator import generate_response
+from rag.generator import generate_response, get_available_models
 from rag.config import init_db_pool, get_db_connection, release_connection
 
 # Initialize FastAPI app
@@ -34,12 +29,20 @@ app.add_middleware(
 # Global flag to track initialization status
 is_initialized = False
 
+# Get model configuration
+DEFAULT_MODEL_TYPE = os.getenv("DEFAULT_MODEL_TYPE", "openai").lower()
+AVAILABLE_MODEL_TYPES = os.getenv("AVAILABLE_MODEL_TYPES", "openai,ollama").lower().split(",")
+DEFAULT_OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
+DEFAULT_OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "tinyllama")
+
 # Define request and response models
 class ProposalRequest(BaseModel):
     query: str
     similarity_threshold: Optional[float] = 0.5
     max_chunks: Optional[int] = 5
     show_retrieved_only: Optional[bool] = False
+    model_type: Optional[str] = DEFAULT_MODEL_TYPE
+    model_name: Optional[str] = None
 
 class Message(BaseModel):
     role: str
@@ -96,6 +99,32 @@ def format_retrieved_chunks(chunks):
         })
     return formatted_chunks
 
+# Parse model info from model string
+def parse_model_info(model_string):
+    """
+    Parse model type and name from a model string.
+    Format can be "ragbot" (default), "openai/gpt-4o", "ollama/tinyllama", etc.
+    
+    Returns:
+        tuple: (model_type, model_name)
+    """
+    if not model_string or model_string == "ragbot":
+        return DEFAULT_MODEL_TYPE, None
+    
+    if "/" in model_string:
+        parts = model_string.split("/", 1)
+        model_type = parts[0].lower()
+        model_name = parts[1] if len(parts) > 1 else None
+        
+        # Validate model type
+        if model_type not in AVAILABLE_MODEL_TYPES:
+            model_type = DEFAULT_MODEL_TYPE
+            
+        return model_type, model_name
+    
+    # If no slash, assume it's a model name for the default type
+    return DEFAULT_MODEL_TYPE, model_string
+
 # Routes
 @app.post("/api/generate-proposal")
 async def generate_proposal(request: ProposalRequest):
@@ -129,7 +158,16 @@ async def generate_proposal(request: ProposalRequest):
         # Build prompt and generate response
         prompt = build_prompt(chunks, request.query)
         start_time = time.time()
-        response = generate_response(prompt)
+        
+        # Use specified model type and name
+        model_type = request.model_type or DEFAULT_MODEL_TYPE
+        model_name = request.model_name
+        
+        response = generate_response(
+            prompt,
+            model_type=model_type,
+            model=model_name
+        )
         
         return {
             "success": True,
@@ -137,7 +175,9 @@ async def generate_proposal(request: ProposalRequest):
             "retrieved_chunks": retrieved_chunks,
             "metadata": {
                 "generation_time": f"{time.time() - start_time:.2f}s",
-                "query": request.query
+                "query": request.query,
+                "model_type": model_type,
+                "model_name": model_name or "default"
             }
         }
     except Exception as e:
@@ -179,6 +219,9 @@ async def process_chat_completion(request: ChatRequest):
         if not last_user_message:
             return format_error_response("No user message found in the request")
         
+        # Parse model type and name from the model string
+        model_type, model_name = parse_model_info(request.model)
+        
         # Process the query using our RAG pipeline
         chunks = search_postgres(
             last_user_message,
@@ -219,23 +262,23 @@ async def process_chat_completion(request: ChatRequest):
                     retrieved_content += f"{chunk_text}\n"
                 retrieved_content += "---\n\n**Generating proposal based on these sources...**\n\n"
                 
-                # Generate the response
                 generated_response = generate_response(
-                    prompt=prompt, 
-                    max_tokens=max_tokens, 
-                    model=model_name, 
-                    temperature=temperature,
+                    prompt, 
+                    max_tokens=request.max_tokens,
+                    model_type=model_type,
+                    model=model_name,
+                    temperature=request.temperature,
                     preserve_formatting=True
                 )
-                
                 generated_text = retrieved_content + generated_response
             else:
                 # Just generate the response without showing chunks
                 generated_text = generate_response(
-                    prompt=prompt, 
-                    max_tokens=max_tokens, 
-                    model=model_name, 
-                    temperature=temperature,
+                    prompt, 
+                    max_tokens=request.max_tokens,
+                    model_type=model_type,
+                    model=model_name,
+                    temperature=request.temperature,
                     preserve_formatting=True
                 )
         else:
@@ -337,15 +380,11 @@ async def retrieve_chunks(request: ProposalRequest):
 
 async def stream_response(content: str):
     """Generate streaming response chunks for OpenAI-compatible streaming"""
-    # Check if content starts with retrieved chunks section
-    retrieved_section_end = content.find("---\n\n**Generating proposal")
+    # Split the content into paragraphs
+    paragraphs = content.split('\n\n')
     
-    # If there's a retrieved section, stream it as a block first
-    if retrieved_section_end > 0:
-        retrieved_content = content[:retrieved_section_end + 4]  # Include the "---\n\n"
-        proposal_content = content[retrieved_section_end + 4:]
-        
-        # Stream the retrieved content as a block
+    for i, paragraph in enumerate(paragraphs):
+        # Create message data for the paragraph
         data = {
             "id": f"chatcmpl-{int(time.time())}",
             "object": "chat.completion.chunk",
@@ -354,97 +393,18 @@ async def stream_response(content: str):
             "choices": [
                 {
                     "index": 0,
-                    "delta": {"content": retrieved_content},
+                    "delta": {"content": paragraph},
                     "finish_reason": None
                 }
             ]
         }
-        yield f"data: {json.dumps(data)}\n\n"
-        await asyncio.sleep(0.1)  # Pause after retrieved content
         
-        # Update content to be just the proposal part
-        content = proposal_content
-    
-    # Split the content by paragraphs
-    paragraphs = content.split('\n\n')
-    
-    for p_idx, paragraph in enumerate(paragraphs):
-        # For very long paragraphs, split them further
-        if len(paragraph) > 300:
-            # Split into sentences
-            sentences = paragraph.replace('\n', ' ').split('. ')
-            current_chunk = []
-            current_length = 0
-            
-            for sentence in sentences:
-                if not sentence.endswith('.'):
-                    sentence += '.'
-                
-                sentence_length = len(sentence)
-                
-                # If this sentence would make the chunk too long, send the current chunk
-                if current_length + sentence_length > 200 and current_chunk:
-                    chunk_text = ' '.join(current_chunk)
-                    data = {
-                        "id": f"chatcmpl-{int(time.time())}",
-                        "object": "chat.completion.chunk",
-                        "created": int(time.time()),
-                        "model": "ragbot",
-                        "choices": [
-                            {
-                                "index": 0,
-                                "delta": {"content": chunk_text + " "},
-                                "finish_reason": None
-                            }
-                        ]
-                    }
-                    yield f"data: {json.dumps(data)}\n\n"
-                    await asyncio.sleep(0.05)
-                    current_chunk = []
-                    current_length = 0
-                
-                current_chunk.append(sentence)
-                current_length += sentence_length
-            
-            # Send any remaining content in the current chunk
-            if current_chunk:
-                chunk_text = ' '.join(current_chunk)
-                data = {
-                    "id": f"chatcmpl-{int(time.time())}",
-                    "object": "chat.completion.chunk",
-                    "created": int(time.time()),
-                    "model": "ragbot",
-                    "choices": [
-                        {
-                            "index": 0,
-                            "delta": {"content": chunk_text},
-                            "finish_reason": None
-                        }
-                    ]
-                }
-                yield f"data: {json.dumps(data)}\n\n"
-                await asyncio.sleep(0.05)
-        else:
-            # Short paragraph - send as is
-            data = {
-                "id": f"chatcmpl-{int(time.time())}",
-                "object": "chat.completion.chunk",
-                "created": int(time.time()),
-                "model": "ragbot",
-                "choices": [
-                    {
-                        "index": 0,
-                        "delta": {"content": paragraph},
-                        "finish_reason": None
-                    }
-                ]
-            }
-            yield f"data: {json.dumps(data)}\n\n"
-            await asyncio.sleep(0.05)
+        # Send the chunk
+        yield f"data: {json.dumps(data)}\n\n"
         
         # Add paragraph breaks between paragraphs, but not after the last one
-        if p_idx < len(paragraphs) - 1:
-            data = {
+        if i < len(paragraphs) - 1:
+            paragraph_break_data = {
                 "id": f"chatcmpl-{int(time.time())}",
                 "object": "chat.completion.chunk",
                 "created": int(time.time()),
@@ -457,11 +417,13 @@ async def stream_response(content: str):
                     }
                 ]
             }
-            yield f"data: {json.dumps(data)}\n\n"
-            await asyncio.sleep(0.02)  # Shorter pause for paragraph breaks
+            yield f"data: {json.dumps(paragraph_break_data)}\n\n"
+        
+        # Small delay between chunks
+        await asyncio.sleep(0.05)
     
     # End the stream
-    data = {
+    end_data = {
         "id": f"chatcmpl-{int(time.time())}",
         "object": "chat.completion.chunk",
         "created": int(time.time()),
@@ -474,7 +436,7 @@ async def stream_response(content: str):
             }
         ]
     }
-    yield f"data: {json.dumps(data)}\n\n"
+    yield f"data: {json.dumps(end_data)}\n\n"
     yield "data: [DONE]\n\n"
 
 @app.get("/models")
@@ -494,51 +456,53 @@ async def list_models_no_prefix():
 
 @app.get("/api/models")
 async def list_models():
-    """OpenAI-compatible models endpoint that includes both OpenAI and Ollama models"""
+    """OpenAI-compatible models endpoint"""
     try:
-        from rag.generator import list_available_models, MODEL_TYPE
-        
         # Get available models
-        models_list = list_available_models()
+        available_models = get_available_models()
         
-        # Convert to OpenAI-compatible format
-        openai_models = []
-        for model in models_list:
-            model_id = model["id"]
-            model_type = model["type"]
-            
-            openai_models.append({
-                "id": model_id,
+        model_data = [
+            {
+                "id": "ragbot",
                 "object": "model",
                 "created": int(time.time()),
                 "owned_by": "organization-owner" if model_type == "openai" else "ollama",
                 "permission": [],
                 "root": model_type,
                 "parent": None
+            }
+        ]
+        
+        # Add OpenAI models
+        for model in available_models.get("openai", []):
+            model_data.append({
+                "id": f"openai/{model}",
+                "object": "model",
+                "created": int(time.time()),
+                "owned_by": "openai",
+                "permission": [],
+                "root": model,
+                "parent": None
             })
         
-        # Always include the default "ragbot" model for backward compatibility
-        openai_models.append({
-            "id": "ragbot",
-            "object": "model",
-            "created": int(time.time()),
-            "owned_by": "organization-owner",
-            "permission": [],
-            "root": "ragbot",
-            "parent": None
-        })
+        # Add Ollama models
+        for model in available_models.get("ollama", []):
+            model_data.append({
+                "id": f"ollama/{model}",
+                "object": "model",
+                "created": int(time.time()),
+                "owned_by": "ollama",
+                "permission": [],
+                "root": model,
+                "parent": None
+            })
         
         return {
             "object": "list",
-            "data": openai_models
+            "data": model_data
         }
-        
     except Exception as e:
-        print(f"Error in list_models: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        
-        # Fallback response with just the ragbot model
+        print(f"Error listing models: {str(e)}")
         return {
             "object": "list",
             "data": [

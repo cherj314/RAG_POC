@@ -2,7 +2,7 @@ services:
   postgres:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: docker/Dockerfile
     ports:
       - "${DB_PORT:-5432}:5432"
     environment:
@@ -47,7 +47,7 @@ services:
   ragbot-api:
     build:
       context: .
-      dockerfile: Dockerfile-api
+      dockerfile: docker/Dockerfile-api
     image: ragbot-api-image
     ports:
       - "${API_PORT:-8000}:8000"
@@ -58,12 +58,14 @@ services:
       - DB_USER=${POSTGRES_USER:-myuser}
       - DB_PASSWORD=${POSTGRES_PASSWORD:-mypassword}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-sentence-transformers/all-mpnet-base-v2}
       - COLLECTION_NAME=${COLLECTION_NAME:-document_chunks}
       - CHUNK_SIZE=${CHUNK_SIZE:-600}
       - CHUNK_OVERLAP=${CHUNK_OVERLAP:-50}
-      - MODEL_TYPE=${MODEL_TYPE:-openai}
-      - MODEL_NAME=${MODEL_NAME:-gpt-4o}
+      - DEFAULT_MODEL_TYPE=${DEFAULT_MODEL_TYPE:-openai}
+      - AVAILABLE_MODEL_TYPES=${AVAILABLE_MODEL_TYPES:-openai,ollama}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-tinyllama}
       - OLLAMA_BASE_URL=http://ollama:11434
       - PYTHONUNBUFFERED=1
     depends_on:
@@ -91,7 +93,7 @@ services:
       - DB_USER=${POSTGRES_USER:-myuser}
       - DB_PASSWORD=${POSTGRES_PASSWORD:-mypassword}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-sentence-transformers/all-mpnet-base-v2}
       - COLLECTION_NAME=${COLLECTION_NAME:-document_chunks}
       - CHUNK_SIZE=${CHUNK_SIZE:-600}
       - CHUNK_OVERLAP=${CHUNK_OVERLAP:-50}
@@ -114,8 +116,28 @@ services:
           cpus: '4'
           memory: 4G
 
+  ollama:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile-ollama
+    environment:
+      - MODEL_NAME=${OLLAMA_MODEL:-tinyllama}
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    networks:
+      - ragbot-network
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 12G
+
   openwebui:
-    image: ghcr.io/open-webui/open-webui:main
+    build:
+      context: .
+      dockerfile: docker/Dockerfile-openwebui
     ports:
       - "${WEBUI_PORT:-3000}:8080"
     environment:
@@ -124,17 +146,19 @@ services:
       - CUSTOM_API_BASE_URL=http://ragbot-api:8000
       - CUSTOM_API_CONTEXT_SIZE=4096
       - API_BACKEND=custom
+      - CORS_ALLOW_ORIGIN=http://localhost:${WEBUI_PORT:-3000}
     volumes:
       - openwebui-data:/app/backend/data
     depends_on:
-      - ragbot-api
+      ragbot-api:
+        condition: service_started
     networks:
       - ragbot-network
     deploy:
       resources:
         limits:
           cpus: '1'
-          memory: 1G
+          memory: '1G'
 
 networks:
   ragbot-network:
@@ -143,4 +167,4 @@ networks:
 volumes:
   pgdata:
   openwebui-data:
-  ollama-models:
+  ollama-data:

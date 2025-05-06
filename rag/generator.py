@@ -1,10 +1,5 @@
-import os
-import openai
-import re
-import requests
+import os, openai, re, requests, time
 from dotenv import load_dotenv
-import time
-from typing import Dict, Any, Optional, List
 
 # Load environment variables
 load_dotenv()
@@ -12,65 +7,55 @@ load_dotenv()
 # Configure OpenAI client
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
-# Model configuration
-MODEL_TYPE = os.getenv("MODEL_TYPE", "openai").lower()
-MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4o")
+# Ollama configuration
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "tinyllama")
 
-def generate_response(prompt, max_tokens=2048, model=None, temperature=0.3, preserve_formatting=True):
+def generate_response(
+    prompt, 
+    max_tokens=2048, 
+    model_type=None,
+    model=None, 
+    temperature=0.3, 
+    preserve_formatting=True
+):
     """
-    Generate a response using either OpenAI or Ollama based on MODEL_TYPE setting.
+    Generate a response using either OpenAI's or Ollama's models with enhanced error handling and retries.
     
     Args:
         prompt (str): The input prompt for the LLM
         max_tokens (int): Maximum number of tokens to generate
-        model (str, optional): Override the default model
+        model_type (str): The model type to use ("openai" or "ollama")
+        model (str): The specific model to use
         temperature (float): Temperature for generation (higher is more creative)
         preserve_formatting (bool): Whether to preserve paragraph breaks and formatting
         
     Returns:
         str: The generated response
     """
-    # Use environment variables or defaults if not provided
-    model_type = MODEL_TYPE
-    model_name = model or MODEL_NAME
+    # Determine model type if not specified
+    if model_type is None:
+        model_type = os.getenv("DEFAULT_MODEL_TYPE", "openai").lower()
     
-    print(f"Generating response with: model_type={model_type}, model={model_name}")
-    
-    # Generate response based on model type
+    # Call appropriate generation function based on model type
     if model_type == "openai":
-        return generate_response_with_openai(
-            prompt=prompt,
-            max_tokens=max_tokens,
-            model=model_name,
-            temperature=temperature,
-            preserve_formatting=preserve_formatting
-        )
+        return generate_with_openai(prompt, max_tokens, model, temperature, preserve_formatting)
     elif model_type == "ollama":
-        return generate_response_with_ollama(
-            prompt=prompt,
-            max_tokens=max_tokens,
-            model=model_name,
-            temperature=temperature,
-            preserve_formatting=preserve_formatting
-        )
+        return generate_with_ollama(prompt, max_tokens, model, temperature, preserve_formatting)
     else:
-        return f"Error: Unsupported model type '{model_type}'. Please check your configuration."
+        raise ValueError(f"Unsupported model type: {model_type}")
 
-def generate_response_with_openai(prompt, max_tokens=2048, model="gpt-4o", temperature=0.3, preserve_formatting=True):
-    """
-    Generate a response using OpenAI's model with enhanced error handling and retries.
+def generate_with_openai(
+    prompt, 
+    max_tokens=2048, 
+    model=None, 
+    temperature=0.3, 
+    preserve_formatting=True
+):
+    """Generate a response using OpenAI's models."""
+    if model is None:
+        model = os.getenv("OPENAI_MODEL", "gpt-4o")
     
-    Args:
-        prompt (str): The input prompt for the LLM
-        max_tokens (int): Maximum number of tokens to generate
-        model (str): The OpenAI model to use
-        temperature (float): Temperature for generation (higher is more creative)
-        preserve_formatting (bool): Whether to preserve paragraph breaks and formatting
-        
-    Returns:
-        str: The generated response
-    """
     max_retries = 3
     backoff_factor = 1.5
     
@@ -90,19 +75,7 @@ def generate_response_with_openai(prompt, max_tokens=2048, model="gpt-4o", tempe
             
             # If we need to preserve formatting
             if preserve_formatting:
-                # Replace any instances of 3+ newlines with exactly 2 newlines
-                formatted_content = re.sub(r'\n{3,}', '\n\n', raw_content)
-                
-                # Add newlines before headers if they don't already have them
-                formatted_content = re.sub(r'(?<!\n\n)(#{1,6}\s)', r'\n\n\1', formatted_content)
-                
-                # Ensure all bullet points have proper spacing
-                formatted_content = re.sub(r'(?<!\n)(\s*[-*+]\s)', r'\n\1', formatted_content)
-                
-                # Preserve citation brackets
-                formatted_content = re.sub(r'\[PASSAGE\s+(\d+)\]', r'[PASSAGE \1]', formatted_content)
-                
-                return formatted_content
+                return format_response(raw_content)
             else:
                 return raw_content
             
@@ -133,146 +106,138 @@ def generate_response_with_openai(prompt, max_tokens=2048, model="gpt-4o", tempe
     # If we've exhausted all retries
     return "Error generating response after multiple attempts. Please try again later."
 
-def generate_response_with_ollama(prompt, max_tokens=2048, model="tinyllama", temperature=0.3, preserve_formatting=True):
-    """
-    Generate a response using Ollama API.
+def generate_with_ollama(
+    prompt, 
+    max_tokens=2048, 
+    model=None, 
+    temperature=0.3, 
+    preserve_formatting=True
+):
+    """Generate a response using Ollama models."""
+    if model is None:
+        model = os.getenv("OLLAMA_MODEL", "tinyllama")
     
-    Args:
-        prompt (str): The input prompt for the LLM
-        max_tokens (int): Maximum number of tokens to generate
-        model (str): The Ollama model to use (e.g., tinyllama)
-        temperature (float): Temperature for generation
-        preserve_formatting (bool): Whether to preserve paragraph breaks and formatting
-        
-    Returns:
-        str: The generated response
-    """
-    try:
-        # Extract just the question if the prompt has the RAG format
-        if "QUESTION:" in prompt:
-            question = prompt.split("QUESTION:", 1)[1].strip()
-        else:
-            question = prompt
-        
-        # Simplify the system prompt
-        system_prompt = "You are an expert on Harry Potter books with comprehensive knowledge of the series."
-        
-        # Prepare the payload for Ollama API
-        payload = {
-            "model": model,
-            "prompt": question,
-            "system": system_prompt,
-            "options": {
-                "temperature": temperature,
-                "num_predict": max_tokens,
-            },
-            "stream": False
+    max_retries = 3
+    backoff_factor = 1.5
+    
+    # Format the request for Ollama API
+    # Create system and user messages
+    messages = [
+        {"role": "system", "content": "You are an expert on Harry Potter books with comprehensive knowledge of the series."},
+        {"role": "user", "content": prompt}
+    ]
+    
+    # Build the request payload
+    url = f"{OLLAMA_BASE_URL}/api/chat"
+    payload = {
+        "model": model,
+        "messages": messages,
+        "stream": False,
+        "options": {
+            "temperature": temperature,
+            "num_predict": max_tokens
         }
-        
-        # Make the API request to Ollama
-        response = requests.post(
-            f"{OLLAMA_BASE_URL}/api/generate",
-            json=payload,
-            timeout=60
-        )
-        
-        # Check if the request was successful
-        if response.status_code == 200:
-            data = response.json()
-            result = data.get("response", "").strip()
-            return result
-        else:
-            error_msg = f"Ollama API error: {response.status_code} - {response.text}"
-            print(error_msg)
-            return f"Error: {error_msg}"
+    }
+    
+    for retry in range(max_retries):
+        try:
+            response = requests.post(url, json=payload)
+            response.raise_for_status()
+            
+            # Extract the response content
+            result = response.json()
+            raw_content = result.get("message", {}).get("content", "")
+            
+            # Format if needed
+            if preserve_formatting:
+                return format_response(raw_content)
+            else:
+                return raw_content
                 
-    except Exception as e:
-        error_msg = f"Error generating response with Ollama: {str(e)}"
-        print(error_msg)
-        return f"Error: {error_msg}"
+        except requests.exceptions.RequestException as e:
+            # Handle network errors
+            if retry < max_retries - 1:
+                sleep_time = backoff_factor ** retry
+                print(f"Ollama request failed. Retrying in {sleep_time:.1f}s... ({retry+1}/{max_retries})")
+                time.sleep(sleep_time)
+            else:
+                print(f"Error connecting to Ollama: {str(e)}")
+                return "Error: Could not connect to Ollama service. Please check if the service is running."
+                
+        except Exception as e:
+            # Handle other errors
+            print(f"Error generating response with Ollama (attempt {retry+1}/{max_retries}): {str(e)}")
+            
+            if retry < max_retries - 1:
+                sleep_time = backoff_factor ** retry
+                time.sleep(sleep_time)
+            else:
+                # Final attempt with simplified prompt
+                try:
+                    # Simplify the prompt for the last attempt
+                    simplified_prompt = "Answer this Harry Potter question briefly: " + prompt.split("QUESTION:")[-1]
+                    
+                    simple_payload = {
+                        "model": model,
+                        "messages": [
+                            {"role": "system", "content": "You are a Harry Potter expert. Keep answers brief."},
+                            {"role": "user", "content": simplified_prompt}
+                        ],
+                        "stream": False,
+                        "options": {
+                            "temperature": 0.2,
+                            "num_predict": max_tokens // 2
+                        }
+                    }
+                    
+                    response = requests.post(url, json=simple_payload)
+                    response.raise_for_status()
+                    
+                    result = response.json()
+                    return result.get("message", {}).get("content", "")
+                    
+                except:
+                    return "Error generating response with Ollama. Please try again later."
+    
+    # If we've exhausted all retries
+    return "Error generating response after multiple attempts. Please try again later."
 
-def check_ollama_health():
+def format_response(raw_content):
+    """Format the response for better readability."""
+    # Replace any instances of 3+ newlines with exactly 2 newlines
+    formatted_content = re.sub(r'\n{3,}', '\n\n', raw_content)
+    
+    # Add newlines before headers if they don't already have them
+    formatted_content = re.sub(r'(?<!\n\n)(#{1,6}\s)', r'\n\n\1', formatted_content)
+    
+    # Ensure all bullet points have proper spacing
+    formatted_content = re.sub(r'(?<!\n)(\s*[-*+]\s)', r'\n\1', formatted_content)
+    
+    # Preserve citation brackets
+    formatted_content = re.sub(r'\[PASSAGE\s+(\d+)\]', r'[PASSAGE \1]', formatted_content)
+    
+    return formatted_content
+
+def get_available_models():
     """
-    Check if the Ollama service is healthy.
+    Get a list of available models for both OpenAI and Ollama.
     
     Returns:
-        dict: Status information about Ollama
+        dict: Dictionary with available models by provider
     """
+    models = {
+        "openai": ["gpt-4o", "gpt-3.5-turbo"],
+        "ollama": ["tinyllama"]
+    }
+    
+    # Try to get available Ollama models
     try:
-        # Check if Ollama service is running
-        response = requests.get(f"{OLLAMA_BASE_URL}/api/version", timeout=5)
-        
+        response = requests.get(f"{OLLAMA_BASE_URL}/api/tags")
         if response.status_code == 200:
-            return {
-                "status": "ok",
-                "details": response.json()
-            }
-        else:
-            return {
-                "status": "error",
-                "message": f"Ollama returned status code {response.status_code}"
-            }
-    except Exception as e:
-        return {
-            "status": "error",
-            "message": f"Failed to connect to Ollama: {str(e)}"
-        }
-
-def list_available_models():
-    """
-    Get a list of all available models based on configured model types.
-    
-    Returns:
-        list: Available model configurations
-    """
-    models = []
-    
-    # Always include OpenAI models if API key is set
-    if os.getenv("OPENAI_API_KEY"):
-        models.extend([
-            {"id": "gpt-4o", "name": "GPT-4o", "type": "openai", "context_length": 128000},
-            {"id": "gpt-3.5-turbo", "name": "GPT-3.5 Turbo", "type": "openai", "context_length": 16000}
-        ])
-    
-    # Check Ollama models
-    try:
-        # Check if Ollama service is running
-        response = requests.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=5)
-        
-        if response.status_code == 200:
-            data = response.json()
-            available_models = data.get("models", [])
-            
-            # Add each available Ollama model
-            for model_info in available_models:
-                model_name = model_info.get("name", "")
-                if model_name:
-                    models.append({
-                        "id": model_name,
-                        "name": f"Ollama: {model_name}",
-                        "type": "ollama",
-                        "context_length": 4096  # Default context length for most small models
-                    })
-        
-        # Always add the default Ollama model even if it's not yet downloaded
-        default_ollama_model = os.getenv("OLLAMA_MODEL", "tinyllama")
-        if not any(model["id"] == default_ollama_model for model in models):
-            models.append({
-                "id": default_ollama_model,
-                "name": f"Ollama: {default_ollama_model}",
-                "type": "ollama",
-                "context_length": 4096
-            })
-            
-    except Exception as e:
-        print(f"Error checking Ollama models: {str(e)}")
-        # Add a placeholder for the default Ollama model
-        default_ollama_model = os.getenv("OLLAMA_MODEL", "tinyllama")
-        models.append({
-            "id": default_ollama_model,
-            "name": f"Ollama: {default_ollama_model} (Not connected)",
-            "type": "ollama",
-            "context_length": 4096
-        })
+            ollama_models = response.json().get("models", [])
+            if ollama_models:
+                models["ollama"] = [model["name"] for model in ollama_models]
+    except:
+        pass  # Use default Ollama models if we can't fetch them
     
     return models

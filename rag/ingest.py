@@ -1,19 +1,11 @@
-import os
-import sys
-import time
-import glob
-import re
-import concurrent.futures
-import traceback
-from typing import List
+import os, sys, time, glob, re, concurrent.futures, traceback
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.docstore.document import Document
 from langchain_community.document_loaders import TextLoader
 from langchain_community.vectorstores.pgvector import PGVector
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
-from tqdm import tqdm
 from pdf_loader import PDFLoader
 
 # Import our custom semantic text splitter
@@ -33,7 +25,7 @@ DB_NAME = os.getenv("POSTGRES_DB", "vectordb")
 DB_USER = os.getenv("POSTGRES_USER", "myuser")
 DB_PASSWORD = os.getenv("POSTGRES_PASSWORD", "mypassword")
 COLLECTION_NAME = os.getenv("COLLECTION_NAME", "document_chunks")
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-mpnet-base-v2")
 
 # Chunking configuration
 CHUNKING_STRATEGY = os.getenv("CHUNKING_STRATEGY", "semantic").lower()
@@ -351,111 +343,9 @@ def process_document(file_path):
             print(f"❌ Error splitting document {file_name}: {str(e)}")
             print(f"Detailed error: {traceback.format_exc()}")
             
-            # Fallback to basic chunking with even more basic splitter
-            try:
-                print("  - Trying fallback chunking method...")
-                basic_splitter = RecursiveCharacterTextSplitter(
-                    chunk_size=CHUNK_SIZE,
-                    chunk_overlap=CHUNK_OVERLAP,
-                    separators=["\n\n", "\n", ". "]
-                )
-                chunks = basic_splitter.split_documents(document)
-                print(f"  - Fallback successful: Created {len(chunks)} chunks")
-                
-                # If chunks were created but we still suspect content loss, add full document
-                if chunks and original_content and file_extension.lower() != '.pdf':
-                    # Check content coverage
-                    total_chunks_content = " ".join([chunk.page_content for chunk in chunks])
-                    chunks_content = re.sub(r'\s+', ' ', total_chunks_content).strip()
-                    original_normalized = re.sub(r'\s+', ' ', original_content).strip()
-                    
-                    # Calculate content coverage
-                    coverage_ratio = len(chunks_content) / len(original_normalized) if len(original_normalized) > 0 else 0
-                    print(f"  - Fallback content coverage: {coverage_ratio:.2f} ({len(chunks_content)} / {len(original_normalized)} chars)")
-                    
-                    # Add full document if coverage is low
-                    if coverage_ratio < 0.9:
-                        print(f"  - Adding full document as a fallback chunk")
-                        chunks.append(Document(
-                            page_content=original_content,
-                            metadata={
-                                "source": file_path,
-                                "file_name": file_name,
-                                "file_id": file_id,
-                                "file_extension": file_extension,
-                                "chunk": len(chunks),
-                                "total_chunks": len(chunks) + 1,
-                                "is_full_document": True,
-                                "is_fallback": True
-                            }
-                        ))
-                
-                return chunks
-            except Exception as e2:
-                print(f"❌ Fallback chunking also failed: {str(e2)}")
-                
-                # Ultimate fallback: just return the original documents
-                if document:
-                    print(f"  - Emergency fallback: Using original document segments as chunks")
-                    # Don't return the raw documents, this ensures they have proper metadata
-                    emergency_chunks = []
-                    for i, doc in enumerate(document):
-                        emergency_chunks.append(Document(
-                            page_content=doc.page_content,
-                            metadata={
-                                "source": file_path,
-                                "file_name": file_name,
-                                "file_id": file_id,
-                                "file_extension": file_extension,
-                                "chunk": i,
-                                "total_chunks": len(document),
-                                "is_emergency_fallback": True,
-                                # Include any existing metadata
-                                **doc.metadata
-                            }
-                        ))
-                    return emergency_chunks
-                else:
-                    # If all else fails and we have the original content, create a single document
-                    if original_content:
-                        print(f"  - Last resort fallback: Creating a single chunk with entire document content")
-                        return [Document(
-                            page_content=original_content,
-                            metadata={
-                                "source": file_path,
-                                "file_name": file_name,
-                                "file_id": file_id,
-                                "file_extension": file_extension,
-                                "is_emergency_fallback": True
-                            }
-                        )]
-                    return []
-            
     except Exception as e:
         print(f"❌ Error processing {file_path}: {str(e)}")
         print(f"Detailed error: {traceback.format_exc()}")
-        
-        # Absolute last resort - try to read the file directly
-        try:
-            if file_extension.lower() != '.pdf':
-                with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
-                    content = f.read()
-                    if content.strip():
-                        print(f"  - Critical error recovery: Creating document from direct file read")
-                        return [Document(
-                            page_content=content,
-                            metadata={
-                                "source": file_path,
-                                "file_name": file_name,
-                                "file_id": file_id,
-                                "file_extension": file_extension,
-                                "is_direct_file_fallback": True
-                            }
-                        )]
-        except Exception as e2:
-            print(f"  - Final recovery attempt failed: {str(e2)}")
-        
-        return []
 
 def find_documents():
     """Find all document files to be processed"""

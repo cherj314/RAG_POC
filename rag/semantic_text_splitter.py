@@ -6,10 +6,8 @@ based on narrative structure, dialogue, scene breaks, and semantic cohesion
 rather than arbitrary character counts.
 """
 
-import nltk
-import torch
-import re
-from typing import List, Optional, Dict, Tuple, Any
+import nltk, torch, re
+from typing import List, Optional, Dict
 from langchain.text_splitter import TextSplitter
 from langchain.docstore.document import Document
 from sentence_transformers import SentenceTransformer
@@ -190,8 +188,6 @@ class SemanticTextSplitter(TextSplitter):
         if not text.strip():
             return []
         
-        self._log(f"Processing narrative text: {len(text)} characters")
-        
         # Split text by paragraphs first
         paragraphs = text.split(self.paragraph_separator)
         
@@ -355,8 +351,6 @@ class SemanticTextSplitter(TextSplitter):
         if not original_text:
             return []
             
-        self._log(f"Splitting narrative text of length {len(text)}")
-        
         # Try narrative chunking optimized for fiction
         try:
             chunks = self._segment_narrative_text(text)
@@ -386,9 +380,6 @@ class SemanticTextSplitter(TextSplitter):
         original_length = len(original_normalized)
         chunks_length = len(chunks_normalized)
         ratio = chunks_length / original_length if original_length > 0 else 0
-        
-        # Log the content preservation statistics
-        self._log(f"Content preservation check: Original: {original_length} chars, Chunks: {chunks_length} chars, Ratio: {ratio:.2f}")
         
         # We consider it successful if we preserved at least 90% of the content
         return ratio >= 0.9

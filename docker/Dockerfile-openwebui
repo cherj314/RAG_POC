@@ -1,0 +1,6 @@
+FROM ghcr.io/open-webui/open-webui:main
+
+# Install additional dependencies
+RUN pip install --no-cache-dir huggingface_hub[hf_xet]
+
+# Use the default entrypoint from the base image

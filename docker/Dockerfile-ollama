@@ -1,0 +1,74 @@
+FROM ollama/ollama:latest
+
+# Set environment variables
+ENV MODEL_NAME=${OLLAMA_MODEL:-tinyllama}
+
+# Install necessary tools
+USER root
+RUN apt-get update && \
+    apt-get install -y curl && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Create a healthcheck script
+COPY <<EOF /usr/local/bin/healthcheck.sh
+#!/bin/sh
+# Check if Ollama server is responding
+if curl -s http://localhost:11434 > /dev/null; then
+  # Check if our model is available
+  if curl -s http://localhost:11434/api/tags | grep -q "\$MODEL_NAME"; then
+    exit 0
+  else
+    echo "Model \$MODEL_NAME not found" >&2
+    exit 0
+  fi
+else
+  echo "Ollama server not responding" >&2
+  exit 1
+fi
+EOF
+
+RUN chmod +x /usr/local/bin/healthcheck.sh
+
+# Create a startup script that will download the model and start Ollama
+COPY <<EOF /usr/local/bin/start.sh
+#!/bin/sh
+set -e
+
+# Start Ollama in the background
+ollama serve &
+OLLAMA_PID=\$!
+
+# Give Ollama a moment to initialize
+sleep 5
+
+echo "Downloading model: \$MODEL_NAME"
+# Keep trying to pull the model with exponential backoff
+MAX_RETRIES=5
+RETRY_COUNT=0
+RETRY_DELAY=5
+
+until curl -s -X POST http://localhost:11434/api/pull -d "{\\"name\\":\\"\$MODEL_NAME\\"}" > /dev/null; do
+  RETRY_COUNT=\$((RETRY_COUNT+1))
+  if [ \$RETRY_COUNT -ge \$MAX_RETRIES ]; then
+    echo "Error: Failed to pull model \$MODEL_NAME after multiple retries" >&2
+    # Don't exit here - continue with the server running even if model pull failed
+    break
+  fi
+  echo "Retrying model download... (retry \$RETRY_COUNT/\$MAX_RETRIES)"
+  sleep \$((RETRY_DELAY * RETRY_COUNT))
+done
+
+echo "Ollama server is running with model \$MODEL_NAME"
+
+# Wait for the Ollama process to complete
+wait \$OLLAMA_PID
+EOF
+
+RUN chmod +x /usr/local/bin/start.sh
+
+# Set the entrypoint to our startup script
+ENTRYPOINT ["/usr/local/bin/start.sh"]
+
+# The container is healthy when it can respond to API requests
+HEALTHCHECK --interval=20s --timeout=10s --start-period=120s --retries=5 CMD ["/usr/local/bin/healthcheck.sh"]
