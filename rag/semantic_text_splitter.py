@@ -7,7 +7,7 @@ rather than arbitrary character counts.
 """
 
 import nltk, torch, re
-from typing import List, Optional, Dict, Tuple, Any
+from typing import List, Optional, Dict
 from langchain.text_splitter import TextSplitter
 from langchain.docstore.document import Document
 from sentence_transformers import SentenceTransformer

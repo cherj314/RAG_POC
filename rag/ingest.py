@@ -1,5 +1,4 @@
 import os, sys, time, glob, re, concurrent.futures, traceback
-from typing import List
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.docstore.document import Document
 from langchain_community.document_loaders import TextLoader
@@ -7,7 +6,6 @@ from langchain_community.vectorstores.pgvector import PGVector
 from langchain_huggingface import HuggingFaceEmbeddings
 from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
-from tqdm import tqdm
 from pdf_loader import PDFLoader
 
 # Import our custom semantic text splitter

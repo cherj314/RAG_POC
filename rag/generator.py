@@ -1,6 +1,5 @@
-import os, openai, re, requests, json, time
+import os, openai, re, requests, time
 from dotenv import load_dotenv
-from typing import Dict, Any, Optional, Union
 
 # Load environment variables
 load_dotenv()
