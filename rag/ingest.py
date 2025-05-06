@@ -1,10 +1,4 @@
-import os
-import sys
-import time
-import glob
-import re
-import concurrent.futures
-import traceback
+import os, sys, time, glob, re, concurrent.futures, traceback
 from typing import List
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.docstore.document import Document

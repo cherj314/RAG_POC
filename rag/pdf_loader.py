@@ -1,8 +1,6 @@
 """Enhanced PDF document loader for RAGbot"""
 
-import os
-import time
-import re
+import os, time, re
 from typing import List, Dict, Any, Optional
 from pypdf import PdfReader
 from langchain.docstore.document import Document

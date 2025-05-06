@@ -1,7 +1,4 @@
-import sys
-import os
-import json
-import numpy as np
+import sys, os, json, numpy as np
 from typing import List, Tuple, Dict, Any, Optional
 from sentence_transformers import SentenceTransformer
 
