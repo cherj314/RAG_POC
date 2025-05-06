@@ -24,26 +24,6 @@ services:
           cpus: '1'
           memory: 1G
 
-  ollama:
-    image: ollama/ollama:latest
-    volumes:
-      - ollama-models:/root/.ollama
-    ports:
-      - "${OLLAMA_PORT:-11434}:11434"
-    networks:
-      - ragbot-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:11434/api/version"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
-    deploy:
-      resources:
-        limits:
-          cpus: '2'
-          memory: 4G
-
   ragbot-api:
     build:
       context: .
