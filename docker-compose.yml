@@ -95,7 +95,7 @@ services:
       - ./:/app
     networks:
       - ragbot-network
-    command: echo "Ingestion service is dormant. Use the web UI button to trigger ingestion."
+    command: python rag/ingest.py
     restart: "no"
     deploy:
       resources:
