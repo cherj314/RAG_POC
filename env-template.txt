@@ -5,7 +5,6 @@ OPENAI_API_KEY=
 POSTGRES_USER=myuser
 POSTGRES_PASSWORD=your_secure_password_here
 POSTGRES_DB=vectordb
-# Use 'postgres' when running within Docker network, 'localhost' for local development
 DB_HOST=postgres
 DB_PORT=5432
 DB_USER=myuser
@@ -14,7 +13,6 @@ DB_PASSWORD=your_secure_password_here
 # Vector DB Configuration
 COLLECTION_NAME=document_chunks
 
-# Embedding Model Configuration
 # Embedding model to use for document vectorization
 EMBEDDING_MODEL=sentence-transformers/all-mpnet-base-v2
 
@@ -25,7 +23,7 @@ DEFAULT_MODEL_TYPE=openai
 AVAILABLE_MODEL_TYPES=openai,ollama
 # Default OpenAI model
 OPENAI_MODEL=gpt-4o
-# Default 
+# Default
 OLLAMA_MODEL=llama3:instruct
 # Temperature for generation (0.0-1.0)
 TEMPERATURE=0.3
