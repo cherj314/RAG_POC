@@ -95,7 +95,7 @@ services:
       - ./:/app
     networks:
       - ragbot-network
-    command: python rag/ingest.py
+    command: echo "Ingestion service is dormant. Use the web UI button to trigger ingestion."
     restart: "no"
     deploy:
       resources:
@@ -135,7 +135,8 @@ services:
       - API_BACKEND=custom
       - CORS_ALLOW_ORIGIN=http://localhost:${WEBUI_PORT:-3000}
     volumes:
-      - openwebui-data:/app/backend/data
+        - openwebui-data:/app/backend/data
+        - ./custom_plugin:/app/backend/data/plugins
     depends_on:
       ragbot-api:
         condition: service_started
