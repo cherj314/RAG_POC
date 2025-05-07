@@ -6,17 +6,17 @@ from psycopg2.pool import SimpleConnectionPool
 load_dotenv()
 
 # Database configuration
-DB_HOST = os.getenv("DB_HOST", "localhost")
-DB_PORT = int(os.getenv("DB_PORT", "5432"))
-DB_NAME = os.getenv("POSTGRES_DB", "vectordb")
-DB_USER = os.getenv("POSTGRES_USER", "myuser")
-DB_PASSWORD = os.getenv("POSTGRES_PASSWORD", "mypassword")
+DB_HOST = os.getenv("DB_HOST")
+DB_PORT = int(os.getenv("DB_PORT"))
+DB_NAME = os.getenv("POSTGRES_DB")
+DB_USER = os.getenv("POSTGRES_USER")
+DB_PASSWORD = os.getenv("POSTGRES_PASSWORD")
 
 # Vector DB configuration
-COLLECTION_NAME = os.getenv("COLLECTION_NAME", "document_chunks")
+COLLECTION_NAME = os.getenv("COLLECTION_NAME")
 
 # Embedding Model configuration
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-mpnet-base-v2")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL")
 
 # Database connection pool
 DB_POOL = None

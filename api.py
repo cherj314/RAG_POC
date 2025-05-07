@@ -30,10 +30,10 @@ app.add_middleware(
 is_initialized = False
 
 # Get model configuration
-DEFAULT_MODEL_TYPE = os.getenv("DEFAULT_MODEL_TYPE", "openai").lower()
-AVAILABLE_MODEL_TYPES = os.getenv("AVAILABLE_MODEL_TYPES", "openai,ollama").lower().split(",")
-DEFAULT_OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
-DEFAULT_OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "tinyllama")
+DEFAULT_MODEL_TYPE = os.getenv("DEFAULT_MODEL_TYPE").lower()
+AVAILABLE_MODEL_TYPES = os.getenv("AVAILABLE_MODEL_TYPES").lower().split(",")
+DEFAULT_OPENAI_MODEL = os.getenv("OPENAI_MODEL")
+DEFAULT_OLLAMA_MODEL = os.getenv("OLLAMA_MODEL")
 
 # Define request and response models
 class ProposalRequest(BaseModel):

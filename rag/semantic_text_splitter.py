@@ -354,7 +354,7 @@ class SemanticTextSplitter(TextSplitter):
         # We consider it successful if we preserved at least 90% of the content
         return ratio >= 0.9
 
-    # Create documents from a list of texts with enhanced metadata for narrative context    
+    # Create langchain Documents from a list of texts with enhanced metadata for narrative context    
     def create_documents(
         self, texts: List[str], metadatas: Optional[List[dict]] = None
     ) -> List[Document]:

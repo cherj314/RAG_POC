@@ -19,27 +19,27 @@ except ImportError:
 load_dotenv()
 
 # Environment variables with defaults
-DB_HOST = os.getenv("DB_HOST", "localhost")
-DB_PORT = int(os.getenv("DB_PORT", "5432"))
-DB_NAME = os.getenv("POSTGRES_DB", "vectordb")
-DB_USER = os.getenv("POSTGRES_USER", "myuser")
-DB_PASSWORD = os.getenv("POSTGRES_PASSWORD", "mypassword")
-COLLECTION_NAME = os.getenv("COLLECTION_NAME", "document_chunks")
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-mpnet-base-v2")
+DB_HOST = os.getenv("DB_HOST")
+DB_PORT = int(os.getenv("DB_PORT"))
+DB_NAME = os.getenv("POSTGRES_DB")
+DB_USER = os.getenv("POSTGRES_USER")
+DB_PASSWORD = os.getenv("POSTGRES_PASSWORD")
+COLLECTION_NAME = os.getenv("COLLECTION_NAME")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL")
 
 # Chunking configuration
-CHUNKING_STRATEGY = os.getenv("CHUNKING_STRATEGY", "semantic").lower()
-CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "600"))
-CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "50"))
-MIN_CHUNK_SIZE = int(os.getenv("MIN_CHUNK_SIZE", "200"))
-MAX_CHUNK_SIZE = int(os.getenv("MAX_CHUNK_SIZE", "1000"))
-SEMANTIC_SIMILARITY = float(os.getenv("SEMANTIC_SIMILARITY", "0.75"))
-RESPECT_STRUCTURE = os.getenv("RESPECT_STRUCTURE", "true").lower() == "true"
+CHUNKING_STRATEGY = os.getenv("CHUNKING_STRATEGY").lower()
+CHUNK_SIZE = int(os.getenv("CHUNK_SIZE"))
+CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP"))
+MIN_CHUNK_SIZE = int(os.getenv("MIN_CHUNK_SIZE"))
+MAX_CHUNK_SIZE = int(os.getenv("MAX_CHUNK_SIZE"))
+SEMANTIC_SIMILARITY = float(os.getenv("SEMANTIC_SIMILARITY"))
+RESPECT_STRUCTURE = os.getenv("RESPECT_STRUCTURE").lower()
 
 # Processing parameters
-DOCS_DIR = os.getenv("DOCS_DIR", "Documents")
-BATCH_SIZE = int(os.getenv("BATCH_SIZE", "500"))
-MAX_WORKERS = int(os.getenv("MAX_WORKERS", "8"))
+DOCS_DIR = os.getenv("DOCS_DIR")
+BATCH_SIZE = int(os.getenv("BATCH_SIZE"))
+MAX_WORKERS = int(os.getenv("MAX_WORKERS"))
 
 # Database connection string
 CONNECTION_STRING = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
@@ -233,6 +233,22 @@ def create_text_splitter(file_extension=""):
         separators=["\n\n", "\n", ". ", "! ", "? ", ";", ":", " ", ""]
     )
 
+# Find all document files to be processed
+def find_documents():
+    if not os.path.exists(DOCS_DIR):
+        print(f"Error: Documents directory '{DOCS_DIR}' not found")
+        return []
+        
+    # Find all supported files in the docs directory
+    print(f"🔍 Searching for documents in '{DOCS_DIR}'...")
+    txt_files = glob.glob(os.path.join(DOCS_DIR, "*.txt"))
+    pdf_files = glob.glob(os.path.join(DOCS_DIR, "*.pdf"))
+    
+    doc_files = txt_files + pdf_files
+    print(f"  - Found {len(txt_files)} text files and {len(pdf_files)} PDF files")
+    
+    return doc_files
+
 # Process a single document file, extract metadata, and split into chunks
 def process_document(file_path):
     try:
@@ -338,22 +354,6 @@ def process_document(file_path):
     except Exception as e:
         print(f"❌ Error processing {file_path}: {str(e)}")
         print(f"Detailed error: {traceback.format_exc()}")
-
-# Find all document files to be processed
-def find_documents():
-    if not os.path.exists(DOCS_DIR):
-        print(f"Error: Documents directory '{DOCS_DIR}' not found")
-        return []
-        
-    # Find all supported files in the docs directory
-    print(f"🔍 Searching for documents in '{DOCS_DIR}'...")
-    txt_files = glob.glob(os.path.join(DOCS_DIR, "*.txt"))
-    pdf_files = glob.glob(os.path.join(DOCS_DIR, "*.pdf"))
-    
-    doc_files = txt_files + pdf_files
-    print(f"  - Found {len(txt_files)} text files and {len(pdf_files)} PDF files")
-    
-    return doc_files
 
 # Process multiple documents using parallel processing when possible
 def process_documents(doc_files):
