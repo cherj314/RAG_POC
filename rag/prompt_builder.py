@@ -1,14 +1,5 @@
+# Builds a prompt that combines retrieved context with the user request.
 def build_prompt(context_chunks, user_prompt):
-    """
-    Builds a prompt that combines retrieved context with the user request.
-    
-    Args:
-        context_chunks (list): List of tuples containing (document_text, metadata, similarity_score)
-        user_prompt (str): The user's original request
-        
-    Returns:
-        str: A formatted prompt for the LLM
-    """
     # Format each context chunk with more detailed source information
     formatted_chunks = []
     

@@ -23,8 +23,8 @@ DB_POOL = None
 DB_MIN_CONNECTIONS = 2
 DB_MAX_CONNECTIONS = 10
 
+# Initialize the connection pool
 def init_db_pool():
-    """Initialize the database connection pool."""
     global DB_POOL
     if DB_POOL is None:
         try:
@@ -41,21 +41,21 @@ def init_db_pool():
             print(f"Error initializing database pool: {str(e)}")
             raise
 
+# Get a connection from the connection pool
 def get_db_connection():
-    """Get a connection from the connection pool."""
     global DB_POOL
     if DB_POOL is None:
         init_db_pool()
     return DB_POOL.getconn()
 
+# Release a connection back to the pool
 def release_connection(conn):
-    """Return a connection to the connection pool."""
     global DB_POOL
     if DB_POOL is not None:
         DB_POOL.putconn(conn)
 
+# Get the UUID of the vector collection
 def get_collection_id(conn):
-    """Get the UUID of the vector collection."""
     global COLLECTION_ID
     cur = conn.cursor()
     cur.execute("""

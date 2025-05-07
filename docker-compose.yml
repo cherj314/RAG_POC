@@ -71,7 +71,6 @@ services:
           memory: 2G
 
   ragbot-ingest:
-    # Reuse the API image instead of rebuilding
     image: ragbot-api-image
     environment:
       - DB_HOST=postgres

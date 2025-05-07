@@ -5,27 +5,16 @@ from typing import List, Dict, Any
 from pypdf import PdfReader
 from langchain.docstore.document import Document
 
+# Loads PDF files and converts them to text documents with enhanced structural recognition.
 class PDFLoader:
-    """Loads PDF files and converts them to text documents with enhanced structural recognition."""
-    
+    # Initialize with file path
     def __init__(self, file_path: str, encoding: str = "utf-8", verbose: bool = True):
-        """Initialize with file path."""
         self.file_path = file_path
         self.encoding = encoding
         self.verbose = verbose
     
+    # Identify structural elements in the extracted text
     def _identify_structure(self, text: str, page_num: int, total_pages: int) -> Dict[str, Any]:
-        """
-        Identify structural elements in the extracted text.
-        
-        Args:
-            text: The extracted text from a PDF page
-            page_num: The current page number
-            total_pages: Total number of pages in the document
-            
-        Returns:
-            Dict containing identified structural elements
-        """
         structure = {}
         
         # Check for headings (common PDF heading patterns)
@@ -102,18 +91,8 @@ class PDFLoader:
         
         return structure
     
+    # Extract text from PDF with structural information
     def _extract_text_with_structure(self, reader: PdfReader, page_num: int, total_pages: int) -> Dict[str, Any]:
-        """
-        Extract text from PDF with additional structural information.
-        
-        Args:
-            reader: The PDF reader object
-            page_num: Current page number (0-based index)
-            total_pages: Total number of pages in the document
-            
-        Returns:
-            Dict with text and structure information
-        """
         page = reader.pages[page_num]
         text = page.extract_text() or ""
         
@@ -152,17 +131,8 @@ class PDFLoader:
             'structure': structure
         }
     
+    # Clean the extracted text based on identified structure
     def _clean_text(self, text: str, structure: Dict[str, Any]) -> str:
-        """
-        Clean the extracted text based on identified structure.
-        
-        Args:
-            text: Original extracted text
-            structure: Structure information dictionary
-            
-        Returns:
-            Cleaned text string with structural elements preserved
-        """
         if not text:
             return ""
         
@@ -198,8 +168,8 @@ class PDFLoader:
         
         return cleaned_text.strip()
     
+    # Load the PDF and extract text with structural awareness
     def load(self) -> List[Document]:
-        """Load PDF and extract text content with structural awareness."""
         try:
             start_time = time.time()
             file_name = os.path.basename(self.file_path)

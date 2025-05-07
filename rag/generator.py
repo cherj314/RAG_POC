@@ -11,6 +11,7 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "tinyllama")
 
+# Generate a response using either OpenAI's or Ollama's models
 def generate_response(
     prompt, 
     max_tokens=2048, 
@@ -19,20 +20,6 @@ def generate_response(
     temperature=0.3, 
     preserve_formatting=True
 ):
-    """
-    Generate a response using either OpenAI's or Ollama's models with enhanced error handling and retries.
-    
-    Args:
-        prompt (str): The input prompt for the LLM
-        max_tokens (int): Maximum number of tokens to generate
-        model_type (str): The model type to use ("openai" or "ollama")
-        model (str): The specific model to use
-        temperature (float): Temperature for generation (higher is more creative)
-        preserve_formatting (bool): Whether to preserve paragraph breaks and formatting
-        
-    Returns:
-        str: The generated response
-    """
     # Determine model type if not specified
     if model_type is None:
         model_type = os.getenv("DEFAULT_MODEL_TYPE", "openai").lower()
@@ -45,6 +32,7 @@ def generate_response(
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
 
+# Generate a response using OpenAI's models
 def generate_with_openai(
     prompt, 
     max_tokens=2048, 
@@ -52,7 +40,6 @@ def generate_with_openai(
     temperature=0.3, 
     preserve_formatting=True
 ):
-    """Generate a response using OpenAI's models."""
     if model is None:
         model = os.getenv("OPENAI_MODEL", "gpt-4o")
     
@@ -124,6 +111,7 @@ def generate_with_openai(
     # If we've exhausted all retries
     return "Error generating response after multiple attempts. Please try again later."
 
+# Generate a response using Ollama's models
 def generate_with_ollama(
     prompt, 
     max_tokens=2048, 
@@ -131,7 +119,6 @@ def generate_with_ollama(
     temperature=0.3, 
     preserve_formatting=True
 ):
-    """Generate a response using Ollama models."""
     if model is None:
         model = os.getenv("OLLAMA_MODEL", "tinyllama")
     
@@ -220,8 +207,8 @@ def generate_with_ollama(
     # If we've exhausted all retries
     return "Error generating response after multiple attempts. Please try again later."
 
+# Format the response to ensure readability and proper formatting
 def format_response(raw_content):
-    """Format the response for better readability."""
     # Replace any instances of 3+ newlines with exactly 2 newlines
     formatted_content = re.sub(r'\n{3,}', '\n\n', raw_content)
     
@@ -236,13 +223,8 @@ def format_response(raw_content):
     
     return formatted_content
 
+# Get the list of available models for OpenAI and Ollama
 def get_available_models():
-    """
-    Get a list of available models for both OpenAI and Ollama.
-    
-    Returns:
-        dict: Dictionary with available models by provider
-    """
     models = {
         "openai": ["gpt-4o", "gpt-3.5-turbo"],
         "ollama": ["tinyllama"]

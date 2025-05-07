@@ -44,8 +44,8 @@ MAX_WORKERS = int(os.getenv("MAX_WORKERS", "8"))
 # Database connection string
 CONNECTION_STRING = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
+# Set up the PostgreSQL database with pgvector extension and optimizations
 def setup_database():
-    """Set up the PostgreSQL database with pgvector extension and optimizations."""
     print("📊 Setting up database...")
     start_time = time.time()
     
@@ -205,16 +205,8 @@ def setup_database():
     
     print(f"✅ Database setup completed in {time.time() - start_time:.2f}s")
 
+# Create the appropriate text splitter based on configuration
 def create_text_splitter(file_extension=""):
-    """
-    Create the appropriate text splitter based on configuration.
-    
-    Args:
-        file_extension (str): File extension to adjust parameters if needed
-        
-    Returns:
-        TextSplitter: A TextSplitter instance
-    """
     # Try to use semantic chunking if selected
     if CHUNKING_STRATEGY == "semantic" and SemanticTextSplitter is not None:
         try:
@@ -241,8 +233,8 @@ def create_text_splitter(file_extension=""):
         separators=["\n\n", "\n", ". ", "! ", "? ", ";", ":", " ", ""]
     )
 
+# Process a single document file, extract metadata, and split into chunks
 def process_document(file_path):
-    """Process a single document file, extract metadata, and split into chunks."""
     try:
         start_time = time.time()
         file_name = os.path.basename(file_path)
@@ -347,8 +339,8 @@ def process_document(file_path):
         print(f"❌ Error processing {file_path}: {str(e)}")
         print(f"Detailed error: {traceback.format_exc()}")
 
+# Find all document files to be processed
 def find_documents():
-    """Find all document files to be processed"""
     if not os.path.exists(DOCS_DIR):
         print(f"Error: Documents directory '{DOCS_DIR}' not found")
         return []
@@ -363,8 +355,8 @@ def find_documents():
     
     return doc_files
 
+# Process multiple documents using parallel processing when possible
 def process_documents(doc_files):
-    """Process multiple documents using parallel processing when possible"""
     all_chunks = []
     
     if not doc_files:
@@ -403,8 +395,8 @@ def process_documents(doc_files):
     
     return all_chunks
 
+# Store chunks in the vector database with batching
 def store_chunks_in_db(chunks, embeddings):
-    """Store chunks in the vector database using batching"""
     if not chunks:
         print("No chunks to store.")
         return
@@ -439,8 +431,8 @@ def store_chunks_in_db(chunks, embeddings):
     total_time = time.time() - start_time
     print(f"✅ All chunks stored in {total_time:.2f}s")
 
+# Main function to run the ingestion pipeline
 def run_pipeline():
-    """Main ingestion pipeline with performance optimizations and content verification."""
     print("\n" + "=" * 50)
     print("📚 Starting document ingestion pipeline")
     print("=" * 50 + "\n")

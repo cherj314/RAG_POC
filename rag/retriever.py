@@ -9,11 +9,10 @@ from rag.config import get_db_connection, release_connection, get_collection_id,
 # Initialize the embedding model (lazily loaded and cached)
 embed_model = None
 
+# Get the sentence transformer model for creating embeddings
 def get_embed_model():
-    """Get the sentence transformer model for creating embeddings."""
     global embed_model
     if embed_model is None:
-        # Use a model better suited for narrative text/literature
         model_name = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-mpnet-base-v2")
         embed_model = SentenceTransformer(model_name)
     return embed_model
@@ -21,23 +20,15 @@ def get_embed_model():
 # Cache for collection ID
 collection_id_cache = None
 
+# Get the collection ID with caching
 def get_cached_collection_id(conn):
-    """Get the collection ID with caching."""
     global collection_id_cache
     if collection_id_cache is None:
         collection_id_cache = get_collection_id(conn)
     return collection_id_cache
 
+# Extract key terms from the query for keyword matching
 def extract_key_terms(query: str) -> List[str]:
-    """
-    Extract key terms from the query for keyword matching.
-    
-    Args:
-        query: The user query string
-        
-    Returns:
-        List of key terms
-    """
     # Remove stop words and punctuation
     stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'with', 'by', 'about', 
                  'as', 'into', 'like', 'through', 'after', 'over', 'between', 'out', 'against', 'during', 'of', 
@@ -66,17 +57,8 @@ def extract_key_terms(query: str) -> List[str]:
     
     return important_words + bigrams
 
+# Calculate cosine similarity between two embeddings
 def calculate_cosine_similarity(embedding1, embedding2):
-    """
-    Calculate cosine similarity between two embeddings manually.
-    
-    Args:
-        embedding1: First embedding vector
-        embedding2: Second embedding vector
-        
-    Returns:
-        float: Cosine similarity score
-    """
     # Convert to numpy arrays if they aren't already
     if not isinstance(embedding1, np.ndarray):
         embedding1 = np.array(embedding1)
@@ -97,24 +79,10 @@ def calculate_cosine_similarity(embedding1, embedding2):
     # Calculate cosine similarity
     return float(dot_product / (magnitude1 * magnitude2))
 
+# Perform a hybrid search combining vector similarity and keyword matching
 def perform_hybrid_search(conn, query: str, collection_id: str, 
                          embedding: np.ndarray, k: int, 
                          similarity_threshold: float, debug: bool = False) -> List[Tuple]:
-    """
-    Perform a hybrid search combining vector similarity with keyword matching.
-    
-    Args:
-        conn: Database connection
-        query: User query string
-        collection_id: Collection ID
-        embedding: Query embedding vector
-        k: Number of results to return
-        similarity_threshold: Minimum similarity score threshold
-        debug: Whether to print debug info
-        
-    Returns:
-        List of (doc, metadata, score) tuples
-    """
     cur = conn.cursor()
     
     # Extract key terms for keyword search
@@ -203,18 +171,8 @@ def perform_hybrid_search(conn, query: str, collection_id: str,
     
     return results
 
+# Ensure diversity in results by removing redundant content
 def ensure_content_diversity(results: List[Tuple], k: int = 5) -> List[Tuple]:
-    """
-    Ensure diversity in results by removing redundant content.
-    Does not require PyTorch, uses simpler text comparison.
-    
-    Args:
-        results: List of (doc, metadata, score) tuples
-        k: Maximum number of results to return
-        
-    Returns:
-        Filtered list with redundant content removed
-    """
     if len(results) <= 1:
         return results
     
@@ -248,19 +206,8 @@ def ensure_content_diversity(results: List[Tuple], k: int = 5) -> List[Tuple]:
     
     return filtered_results
 
+# Search function for PostgreSQL with enhanced retrieval for Harry Potter
 def search_postgres(query, k=5, similarity_threshold=0.3, debug=False):
-    """
-    Search for semantically similar document chunks with enhanced retrieval for Harry Potter.
-    
-    Args:
-        query (str): The user query
-        k (int): Maximum number of results to return
-        similarity_threshold (float): Minimum similarity score (0-1) to include a result
-        debug (bool): Whether to print debug information
-        
-    Returns:
-        list: List of tuples containing (document_text, metadata, similarity_score)
-    """
     if debug:
         print(f"Searching for query: '{query}'")
         print(f"Similarity threshold: {similarity_threshold}")
