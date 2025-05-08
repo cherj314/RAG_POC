@@ -135,7 +135,6 @@ services:
       - CORS_ALLOW_ORIGIN=http://localhost:${WEBUI_PORT}
     volumes:
         - openwebui-data:/app/backend/data
-        - ./custom_plugin:/app/backend/data/plugins
     depends_on:
       ragbot-api:
         condition: service_started
