@@ -19,33 +19,33 @@ except ImportError:
 load_dotenv()
 
 # Environment variables with defaults
-DB_HOST = os.getenv("DB_HOST", "localhost")
-DB_PORT = int(os.getenv("DB_PORT", "5432"))
-DB_NAME = os.getenv("POSTGRES_DB", "vectordb")
-DB_USER = os.getenv("POSTGRES_USER", "myuser")
-DB_PASSWORD = os.getenv("POSTGRES_PASSWORD", "mypassword")
-COLLECTION_NAME = os.getenv("COLLECTION_NAME", "document_chunks")
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-mpnet-base-v2")
+DB_HOST = os.getenv("DB_HOST")
+DB_PORT = int(os.getenv("DB_PORT"))
+DB_NAME = os.getenv("POSTGRES_DB")
+DB_USER = os.getenv("POSTGRES_USER")
+DB_PASSWORD = os.getenv("POSTGRES_PASSWORD")
+COLLECTION_NAME = os.getenv("COLLECTION_NAME")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL")
 
 # Chunking configuration
-CHUNKING_STRATEGY = os.getenv("CHUNKING_STRATEGY", "semantic").lower()
-CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "600"))
-CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "50"))
-MIN_CHUNK_SIZE = int(os.getenv("MIN_CHUNK_SIZE", "200"))
-MAX_CHUNK_SIZE = int(os.getenv("MAX_CHUNK_SIZE", "1000"))
-SEMANTIC_SIMILARITY = float(os.getenv("SEMANTIC_SIMILARITY", "0.75"))
-RESPECT_STRUCTURE = os.getenv("RESPECT_STRUCTURE", "true").lower() == "true"
+CHUNKING_STRATEGY = os.getenv("CHUNKING_STRATEGY").lower()
+CHUNK_SIZE = int(os.getenv("CHUNK_SIZE"))
+CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP"))
+MIN_CHUNK_SIZE = int(os.getenv("MIN_CHUNK_SIZE"))
+MAX_CHUNK_SIZE = int(os.getenv("MAX_CHUNK_SIZE"))
+SEMANTIC_SIMILARITY = float(os.getenv("SEMANTIC_SIMILARITY"))
+RESPECT_STRUCTURE = os.getenv("RESPECT_STRUCTURE").lower()
 
 # Processing parameters
-DOCS_DIR = os.getenv("DOCS_DIR", "Documents")
-BATCH_SIZE = int(os.getenv("BATCH_SIZE", "500"))
-MAX_WORKERS = int(os.getenv("MAX_WORKERS", "8"))
+DOCS_DIR = os.getenv("DOCS_DIR")
+BATCH_SIZE = int(os.getenv("BATCH_SIZE"))
+MAX_WORKERS = int(os.getenv("MAX_WORKERS"))
 
 # Database connection string
 CONNECTION_STRING = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
+# Set up the PostgreSQL database with pgvector extension and optimizations
 def setup_database():
-    """Set up the PostgreSQL database with pgvector extension and optimizations."""
     print("📊 Setting up database...")
     start_time = time.time()
     
@@ -205,16 +205,8 @@ def setup_database():
     
     print(f"✅ Database setup completed in {time.time() - start_time:.2f}s")
 
+# Create the appropriate text splitter based on configuration
 def create_text_splitter(file_extension=""):
-    """
-    Create the appropriate text splitter based on configuration.
-    
-    Args:
-        file_extension (str): File extension to adjust parameters if needed
-        
-    Returns:
-        TextSplitter: A TextSplitter instance
-    """
     # Try to use semantic chunking if selected
     if CHUNKING_STRATEGY == "semantic" and SemanticTextSplitter is not None:
         try:
@@ -241,8 +233,24 @@ def create_text_splitter(file_extension=""):
         separators=["\n\n", "\n", ". ", "! ", "? ", ";", ":", " ", ""]
     )
 
+# Find all document files to be processed
+def find_documents():
+    if not os.path.exists(DOCS_DIR):
+        print(f"Error: Documents directory '{DOCS_DIR}' not found")
+        return []
+        
+    # Find all supported files in the docs directory
+    print(f"🔍 Searching for documents in '{DOCS_DIR}'...")
+    txt_files = glob.glob(os.path.join(DOCS_DIR, "*.txt"))
+    pdf_files = glob.glob(os.path.join(DOCS_DIR, "*.pdf"))
+    
+    doc_files = txt_files + pdf_files
+    print(f"  - Found {len(txt_files)} text files and {len(pdf_files)} PDF files")
+    
+    return doc_files
+
+# Process a single document file, extract metadata, and split into chunks
 def process_document(file_path):
-    """Process a single document file, extract metadata, and split into chunks."""
     try:
         start_time = time.time()
         file_name = os.path.basename(file_path)
@@ -347,24 +355,8 @@ def process_document(file_path):
         print(f"❌ Error processing {file_path}: {str(e)}")
         print(f"Detailed error: {traceback.format_exc()}")
 
-def find_documents():
-    """Find all document files to be processed"""
-    if not os.path.exists(DOCS_DIR):
-        print(f"Error: Documents directory '{DOCS_DIR}' not found")
-        return []
-        
-    # Find all supported files in the docs directory
-    print(f"🔍 Searching for documents in '{DOCS_DIR}'...")
-    txt_files = glob.glob(os.path.join(DOCS_DIR, "*.txt"))
-    pdf_files = glob.glob(os.path.join(DOCS_DIR, "*.pdf"))
-    
-    doc_files = txt_files + pdf_files
-    print(f"  - Found {len(txt_files)} text files and {len(pdf_files)} PDF files")
-    
-    return doc_files
-
+# Process multiple documents using parallel processing when possible
 def process_documents(doc_files):
-    """Process multiple documents using parallel processing when possible"""
     all_chunks = []
     
     if not doc_files:
@@ -403,8 +395,8 @@ def process_documents(doc_files):
     
     return all_chunks
 
+# Store chunks in the vector database with batching
 def store_chunks_in_db(chunks, embeddings):
-    """Store chunks in the vector database using batching"""
     if not chunks:
         print("No chunks to store.")
         return
@@ -439,8 +431,8 @@ def store_chunks_in_db(chunks, embeddings):
     total_time = time.time() - start_time
     print(f"✅ All chunks stored in {total_time:.2f}s")
 
+# Main function to run the ingestion pipeline
 def run_pipeline():
-    """Main ingestion pipeline with performance optimizations and content verification."""
     print("\n" + "=" * 50)
     print("📚 Starting document ingestion pipeline")
     print("=" * 50 + "\n")

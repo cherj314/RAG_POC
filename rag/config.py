@@ -6,25 +6,25 @@ from psycopg2.pool import SimpleConnectionPool
 load_dotenv()
 
 # Database configuration
-DB_HOST = os.getenv("DB_HOST", "localhost")
-DB_PORT = int(os.getenv("DB_PORT", "5432"))
-DB_NAME = os.getenv("POSTGRES_DB", "vectordb")
-DB_USER = os.getenv("POSTGRES_USER", "myuser")
-DB_PASSWORD = os.getenv("POSTGRES_PASSWORD", "mypassword")
+DB_HOST = os.getenv("DB_HOST")
+DB_PORT = int(os.getenv("DB_PORT"))
+DB_NAME = os.getenv("POSTGRES_DB")
+DB_USER = os.getenv("POSTGRES_USER")
+DB_PASSWORD = os.getenv("POSTGRES_PASSWORD")
 
 # Vector DB configuration
-COLLECTION_NAME = os.getenv("COLLECTION_NAME", "document_chunks")
+COLLECTION_NAME = os.getenv("COLLECTION_NAME")
 
 # Embedding Model configuration
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-mpnet-base-v2")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL")
 
 # Database connection pool
 DB_POOL = None
 DB_MIN_CONNECTIONS = 2
 DB_MAX_CONNECTIONS = 10
 
+# Initialize the connection pool
 def init_db_pool():
-    """Initialize the database connection pool."""
     global DB_POOL
     if DB_POOL is None:
         try:
@@ -41,21 +41,21 @@ def init_db_pool():
             print(f"Error initializing database pool: {str(e)}")
             raise
 
+# Get a connection from the connection pool
 def get_db_connection():
-    """Get a connection from the connection pool."""
     global DB_POOL
     if DB_POOL is None:
         init_db_pool()
     return DB_POOL.getconn()
 
+# Release a connection back to the pool
 def release_connection(conn):
-    """Return a connection to the connection pool."""
     global DB_POOL
     if DB_POOL is not None:
         DB_POOL.putconn(conn)
 
+# Get the UUID of the vector collection
 def get_collection_id(conn):
-    """Get the UUID of the vector collection."""
     global COLLECTION_ID
     cur = conn.cursor()
     cur.execute("""

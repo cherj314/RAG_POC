@@ -1,17 +1,8 @@
-"""
-Enhanced Semantic Text Splitter optimized for narrative texts like Harry Potter books
-
-This module provides a semantic text splitter that divides documents
-based on narrative structure, dialogue, scene breaks, and semantic cohesion
-rather than arbitrary character counts.
-"""
-
-import nltk, torch, re
+import nltk, torch, re, numpy as np
 from typing import List, Optional, Dict
 from langchain.text_splitter import TextSplitter
 from langchain.docstore.document import Document
 from sentence_transformers import SentenceTransformer
-import numpy as np
 
 # Download only the necessary NLTK data package instead of all data
 try:
@@ -19,13 +10,10 @@ try:
 except LookupError:
     nltk.download('punkt', quiet=True)
 
+# Split text based on narrative structure and semantic meaning for fiction texts
 class SemanticTextSplitter(TextSplitter):
-    """
-    Split text based on narrative structure and semantic meaning for fiction texts.
-    Optimized for Harry Potter books with scene detection, dialogue preservation,
-    and natural narrative breaks.
-    """
     
+    # Initialize the semantic text splitter optimized for narrative texts
     def __init__(
         self,
         embedding_model: str = "sentence-transformers/all-mpnet-base-v2",  # Upgraded model
@@ -39,21 +27,6 @@ class SemanticTextSplitter(TextSplitter):
         preserve_dialogue: bool = True,  # New parameter for dialogue handling
         verbose: bool = False
     ):
-        """
-        Initialize the semantic text splitter optimized for narrative texts.
-        
-        Args:
-            embedding_model: The embedding model to use for semantic similarity
-            similarity_threshold: Threshold for determining semantic similarity (0-1)
-            min_chunk_size: Minimum size of chunks in characters
-            max_chunk_size: Maximum size of chunks in characters
-            chunk_overlap: Number of characters to overlap between chunks
-            paragraph_separator: String that separates paragraphs
-            sentence_separator: String that separates sentences within paragraphs
-            respect_structure: Whether to respect document structure
-            preserve_dialogue: Whether to keep dialogue exchanges together
-            verbose: Whether to print verbose logs
-        """
         super().__init__(
             chunk_size=max_chunk_size,
             chunk_overlap=chunk_overlap
@@ -83,8 +56,8 @@ class SemanticTextSplitter(TextSplitter):
             self._log("Falling back to basic model initialization")
             self.embedding_model = SentenceTransformer(embedding_model)
     
+    # Compile regex patterns optimized for narrative fiction texts
     def _compile_patterns(self) -> Dict[str, re.Pattern]:
-        """Compile regex patterns optimized for narrative fiction texts."""
         return {
             # Chapter markers (common in Harry Potter books)
             'chapter_heading': re.compile(r'^(?:CHAPTER|Chapter)\s+[A-Z0-9]+(?:\s+[A-Z].*)?$', re.MULTILINE),
@@ -111,13 +84,13 @@ class SemanticTextSplitter(TextSplitter):
             'footer': re.compile(r'\n[^.!?]*(?:[Pp]age|[Cc]hapter)\s*\d+.*$'),
         }
     
+    # Log messages if verbose mode is enabled
     def _log(self, message: str) -> None:
-        """Print a log message if verbose mode is enabled."""
         if self.verbose:
             print(f"[SemanticTextSplitter] {message}")
     
+    # Check if the text contains a narrative structural boundary
     def _is_structural_boundary(self, text: str) -> bool:
-        """Determine if the text contains a narrative structural boundary."""
         if not self.respect_structure:
             return False
             
@@ -127,8 +100,8 @@ class SemanticTextSplitter(TextSplitter):
                 return True
         return False
     
+    # Check if the text represents a dialogue exchange that should be preserved
     def _is_dialogue_unit(self, text: str) -> bool:
-        """Check if this text represents a dialogue exchange that should be preserved."""
         if not self.preserve_dialogue:
             return False
         
@@ -146,9 +119,9 @@ class SemanticTextSplitter(TextSplitter):
             return True
             
         return False
-        
+
+    # Calculate cosine similarity between two embeddings    
     def _calculate_similarity(self, embedding1: np.ndarray, embedding2: np.ndarray) -> float:
-        """Calculate cosine similarity between two embeddings."""
         # Handle zero vectors
         if np.all(embedding1 == 0) or np.all(embedding2 == 0):
             return 0.0
@@ -160,8 +133,8 @@ class SemanticTextSplitter(TextSplitter):
             self._log(f"Error calculating similarity: {str(e)}")
             return 0.0
     
+    # Check if two text segments are semantically similar in narrative context
     def _is_semantically_similar(self, text1: str, text2: str) -> bool:
-        """Determine if two text segments are semantically similar in narrative context."""
         # For very short texts, consider them similar to avoid over-chunking
         if len(text1) < 70 or len(text2) < 70:
             return True
@@ -180,11 +153,8 @@ class SemanticTextSplitter(TextSplitter):
             self._log(f"Error in semantic similarity check: {str(e)}")
             return True
     
+    # Segment narrative text into chunks based on narrative structure and semantic cohesion
     def _segment_narrative_text(self, text: str) -> List[str]:
-        """
-        Segment narrative text into chunks based on narrative structure, dialogue, and semantic cohesion.
-        Optimized for fiction like Harry Potter books.
-        """
         if not text.strip():
             return []
         
@@ -296,8 +266,8 @@ class SemanticTextSplitter(TextSplitter):
         
         return merged_chunks
     
+    # Merge small chunks to ensure all chunks meet minimum size requirements
     def _merge_small_chunks(self, chunks: List[str]) -> List[str]:
-        """Ensure all chunks meet minimum size by merging small chunks, never discarding content."""
         if not chunks:
             return []
             
@@ -342,8 +312,8 @@ class SemanticTextSplitter(TextSplitter):
         
         return final_chunks
     
+    # Split text into narrative-aware chunks optimized for fiction like Harry Potter
     def split_text(self, text: str) -> List[str]:
-        """Split text into narrative-aware chunks optimized for fiction like Harry Potter."""
         if not text:
             return []
             
@@ -364,9 +334,9 @@ class SemanticTextSplitter(TextSplitter):
         # Ultimate fallback: just return the original text as a single chunk
         self._log("Using emergency fallback: returning text as a single chunk")
         return [original_text]
-        
+
+    # Verify that the content of the original text is preserved in the chunks    
     def _verify_content_preservation(self, original_text: str, chunks: List[str]) -> bool:
-        """Verify that all meaningful content from the original text is preserved in the chunks."""
         if not chunks:
             return False
             
@@ -383,11 +353,11 @@ class SemanticTextSplitter(TextSplitter):
         
         # We consider it successful if we preserved at least 90% of the content
         return ratio >= 0.9
-        
+
+    # Create langchain Documents from a list of texts with enhanced metadata for narrative context    
     def create_documents(
         self, texts: List[str], metadatas: Optional[List[dict]] = None
     ) -> List[Document]:
-        """Create documents from a list of texts with enhanced metadata for narrative context."""
         documents = []
         
         for i, text in enumerate(texts):
@@ -423,9 +393,9 @@ class SemanticTextSplitter(TextSplitter):
                 documents.append(Document(page_content=chunk, metadata=doc_metadata))
         
         return documents
-        
+
+    # Split a list of documents into narrative-aware chunks with enhanced metadata    
     def split_documents(self, documents: List[Document]) -> List[Document]:
-        """Split documents into narrative-aware chunks with enhanced metadata."""
         texts = [doc.page_content for doc in documents]
         metadatas = [doc.metadata for doc in documents]
         

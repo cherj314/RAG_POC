@@ -1,18 +1,13 @@
 # RAGbot - Harry Potter Knowledge Assistant
 
-A sophisticated Retrieval-Augmented Generation (RAG) system designed specifically for answering questions about the Harry Potter series. RAGbot uses semantic search and vector embeddings to retrieve relevant passages from the Harry Potter books and generate accurate, contextual responses.
+A Retrieval-Augmented Generation (RAG) system designed specifically for answering questions about the Harry Potter series. RAGbot uses semantic search and vector embeddings to retrieve relevant passages from the Harry Potter books and generate accurate, contextual responses.
 
 ## Features
 
 - **Semantic Search**: Uses sophisticated vector embeddings to find the most relevant text passages
 - **Smart Document Chunking**: Intelligently chunks documents based on narrative structure and semantic similarity
-- **Hybrid Retrieval**: Combines vector similarity with keyword matching for improved results
-- **Multiple LLM Support**: Compatible with both OpenAI models and local Ollama models
-- **Dialogue Preservation**: Special handling to keep dialogue exchanges together during chunking
-- **PDF Support**: Optimized handling for PDF files with structure recognition
 - **Web Interface**: Integration with OpenWebUI for easy interaction
 - **Docker Deployment**: Full containerization for easy setup and deployment
-- **Robust Error Handling**: Multiple fallback mechanisms for reliable document processing
 
 ## Requirements
 
@@ -37,19 +32,12 @@ A sophisticated Retrieval-Augmented Generation (RAG) system designed specificall
    ```
    This will start the PostgreSQL database with pgvector extension, the RAGbot API server, the Ollama server (for local models), and the OpenWebUI interface.
 
-3. **Ingest documents**
-   ```bash
-   docker compose up ragbot-ingest
-   ```
-   This will process and index any Harry Potter text or PDF files in the `Documents/` folder.
-
-4. **Access the web interface**
+3. **Access the web interface**
    - Open http://localhost:3000 in your browser
-   - Login with the token from your `.env` file (WEBUI_AUTH_TOKEN)
-   - Add a new connection to http://localhost:8000
+   - Add a new connection to http://localhost:8000 and input your openAI API key
    - Start asking questions about Harry Potter!
 
-5. **To remove all Docker data for a full restart**
+4. **To remove all Docker data for a full restart**
    ```bash
    docker compose down -v
    docker system prune -a --volumes -f
@@ -62,29 +50,6 @@ A sophisticated Retrieval-Augmented Generation (RAG) system designed specificall
    ```bash
    docker compose up ragbot-ingest
    ```
-
-## System Architecture
-
-### Core Components
-
-- **Vector Database**: PostgreSQL with pgvector extension for efficient similarity search
-- **Document Processing**: Enhanced semantic text splitter optimized for narrative text
-- **Embedding Model**: Sentence transformers for high-quality text embeddings
-- **Retrieval Engine**: Hybrid search combining vector similarity and keyword matching
-- **Generation Layer**: Integration with OpenAI and Ollama models for response generation
-- **API Server**: FastAPI backend with chat completion endpoints compatible with OpenAI format
-
-### Project Structure
-
-- `rag/config.py` - Database and configuration management
-- `rag/ingest.py` - Document processing pipeline
-- `rag/generator.py` - LLM integration for generating responses
-- `rag/retriever.py` - Vector and keyword search implementation
-- `rag/prompt_builder.py` - Context formatting for the LLM
-- `rag/semantic_text_splitter.py` - Narrative-aware document chunking
-- `rag/pdf_loader.py` - PDF handling with structure recognition
-- `api.py` - FastAPI server with OpenAI-compatible endpoints
-- `docker-compose.yml` - Container orchestration
 
 ## API Endpoints
 

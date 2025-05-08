@@ -30,10 +30,10 @@ app.add_middleware(
 is_initialized = False
 
 # Get model configuration
-DEFAULT_MODEL_TYPE = os.getenv("DEFAULT_MODEL_TYPE", "openai").lower()
-AVAILABLE_MODEL_TYPES = os.getenv("AVAILABLE_MODEL_TYPES", "openai,ollama").lower().split(",")
-DEFAULT_OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
-DEFAULT_OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "tinyllama")
+DEFAULT_MODEL_TYPE = os.getenv("DEFAULT_MODEL_TYPE").lower()
+AVAILABLE_MODEL_TYPES = os.getenv("AVAILABLE_MODEL_TYPES").lower().split(",")
+DEFAULT_OPENAI_MODEL = os.getenv("OPENAI_MODEL")
+DEFAULT_OLLAMA_MODEL = os.getenv("OLLAMA_MODEL")
 
 # Define request and response models
 class ProposalRequest(BaseModel):
@@ -74,7 +74,6 @@ async def startup_event():
 
 # Ensure components are initialized
 def ensure_initialized():
-    """Ensure all required components are initialized"""
     global is_initialized
     
     if not is_initialized:
@@ -87,7 +86,6 @@ def ensure_initialized():
 
 # Format retrieved chunks for display
 def format_retrieved_chunks(chunks):
-    """Format retrieved chunks for display to the user"""
     formatted_chunks = []
     for i, (doc, metadata, score) in enumerate(chunks, 1):
         source = metadata.get("file_name", "Unknown") if metadata else "Unknown"
@@ -101,13 +99,6 @@ def format_retrieved_chunks(chunks):
 
 # Parse model info from model string
 def parse_model_info(model_string):
-    """
-    Parse model type and name from a model string.
-    Format can be "ragbot" (default), "openai/gpt-4o", "ollama/tinyllama", etc.
-    
-    Returns:
-        tuple: (model_type, model_name)
-    """
     if not model_string or model_string == "ragbot":
         return DEFAULT_MODEL_TYPE, None
     
@@ -183,10 +174,9 @@ async def generate_proposal(request: ProposalRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generating proposal: {str(e)}")
 
+# OpenAI-compatible chat completions endpoint (without /api prefix)
 @app.post("/chat/completions")
 async def chat_completions_no_prefix(request: Request):
-    """OpenAI-compatible chat completions endpoint (without /api prefix)"""
-    # Parse the request body manually to avoid validation errors
     try:
         body = await request.json()
         chat_request = ChatRequest(**body)
@@ -195,9 +185,9 @@ async def chat_completions_no_prefix(request: Request):
         print(f"Error processing chat request: {str(e)}")
         return format_error_response(str(e))
 
+# OpenAI-compatible chat completions endpoint for OpenWebUI integration
 @app.post("/api/chat/completions")
 async def chat_completions(request: Request):
-    """OpenAI-compatible chat completions endpoint for OpenWebUI integration"""
     try:
         body = await request.json()
         chat_request = ChatRequest(**body)
@@ -206,8 +196,8 @@ async def chat_completions(request: Request):
         print(f"Error processing chat request: {str(e)}")
         return format_error_response(str(e))
 
+# Process a chat completion request
 async def process_chat_completion(request: ChatRequest):
-    """Process a chat completion request"""
     try:
         ensure_initialized()
         
@@ -313,8 +303,8 @@ async def process_chat_completion(request: ChatRequest):
         traceback.print_exc()
         return format_error_response(f"I encountered an error processing your request: {str(e)}")
 
+# Format error response in OpenAI format
 def format_error_response(error_message):
-    """Format a proper error response in OpenAI format"""
     return {
         "id": f"chatcmpl-error-{int(time.time())}",
         "object": "chat.completion",
@@ -362,8 +352,8 @@ async def retrieve_chunks(request: ProposalRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error retrieving chunks: {str(e)}")
 
+# Streaming response generator for OpenAI-compatible streaming
 async def stream_response(content: str):
-    """Generate streaming response chunks for OpenAI-compatible streaming"""
     # Split the content into paragraphs
     paragraphs = content.split('\n\n')
     
@@ -423,14 +413,14 @@ async def stream_response(content: str):
     yield f"data: {json.dumps(end_data)}\n\n"
     yield "data: [DONE]\n\n"
 
+# OpenAI-compatible models endpoint (without /api prefix)
 @app.get("/models")
 async def list_models_no_prefix():
-    """OpenAI-compatible models endpoint (without /api prefix)"""
     return await list_models()
 
+# OpenAI-compatible models endpoint
 @app.get("/api/models")
 async def list_models():
-    """OpenAI-compatible models endpoint"""
     try:
         # Get available models
         available_models = get_available_models()
@@ -492,9 +482,9 @@ async def list_models():
             ]
         }
 
+# Health check endpoint
 @app.get("/api/health")
 async def health_check():
-    """Health check endpoint"""
     from rag.config import DB_POOL
     
     health_status = {
