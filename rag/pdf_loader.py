@@ -1,294 +1,438 @@
-import os, time, re
-from typing import List, Dict, Any
-from pypdf import PdfReader
+import os
+import time
+import re
+import fitz # type: ignore
+from typing import List, Dict, Any, Optional
 from langchain.docstore.document import Document
 
-# Loads PDF files and converts them to text documents with enhanced structural recognition.
 class PDFLoader:
-    # Initialize with file path
+    """
+    Optimized PDF loader using PyMuPDF (fitz) for fast and accurate text extraction
+    with enhanced structural recognition and metadata.
+    """
+    
     def __init__(self, file_path: str, encoding: str = "utf-8", verbose: bool = True):
+        """
+        Initialize with file path and options.
+        
+        Args:
+            file_path: Path to the PDF file
+            encoding: Text encoding (used for output)
+            verbose: Whether to print verbose logging information
+        """
         self.file_path = file_path
         self.encoding = encoding
         self.verbose = verbose
+        
+        # Compile patterns for structural analysis
+        self.patterns = self._compile_patterns()
     
-    # Identify structural elements in the extracted text
-    def _identify_structure(self, text: str, page_num: int, total_pages: int) -> Dict[str, Any]:
-        structure = {}
+    def _compile_patterns(self) -> Dict[str, re.Pattern]:
+        """Compile regex patterns for structural analysis of text."""
+        return {
+            # Chapter headings (common in Harry Potter books)
+            'chapter_heading': re.compile(r'^(?:CHAPTER|Chapter)\s+[A-Z0-9]+(?:\s+[A-Z].*)?$', re.MULTILINE),
+            
+            # Scene breaks
+            'scene_break': re.compile(r'^[\s*#_\-]{3,}$', re.MULTILINE),
+            
+            # Character dialogues (common in Harry Potter)
+            'dialogue': re.compile(r'[\'"].*?[\'"]'),
+            
+            # Character names (Harry Potter specific)
+            'character_names': re.compile(r'\b(Harry|Ron|Hermione|Dumbledore|Snape|Hagrid|Voldemort|McGonagall|Malfoy)\b', re.IGNORECASE),
+            
+            # Headers and footers with page numbers
+            'header_footer': re.compile(r'^\s*(?:\d+|Page \d+|[A-Za-z\s]+ \d+)\s*$'),
+        }
+    
+    def _log(self, message: str) -> None:
+        """Log messages if verbose mode is enabled."""
+        if self.verbose:
+            print(f"[PDFLoader] {message}")
+    
+    def _extract_text_with_optimal_method(self, page: fitz.Page) -> str:
+        """
+        Extract text using the optimal method for the specific page content.
         
-        # Check for headings (common PDF heading patterns)
-        heading_patterns = [
-            # Chapter heading pattern
-            r'^(?:Chapter|CHAPTER)\s+\d+[.:]\s*(.+)$',
-            # Section heading pattern
-            r'^(?:\d+\.)+\s+(.+)$',
-            # All caps heading
-            r'^[A-Z][A-Z\s]+[A-Z]$',
-            # Heading with trailing colon
-            r'^(.+):$',
-            # Numbered or lettered lists
-            r'^\s*(?:\d+\.|[A-Za-z]\.|\(\d+\)|\([A-Za-z]\))\s+(.+)$'
-        ]
+        This method tries different extraction approaches to get the best results.
+        PyMuPDF offers multiple text extraction methods with different trade-offs.
         
-        # Check text lines for structural elements
+        Args:
+            page: PyMuPDF page object
+            
+        Returns:
+            Extracted text with preserved formatting
+        """
+        # Configure text extraction flags for optimal results
+        flags = fitz.TEXT_PRESERVE_LIGATURES | fitz.TEXT_PRESERVE_WHITESPACE | fitz.TEXT_DEHYPHENATE
+        
+        try:
+            # First try the 'dict' mode which gives structure with preserved formatting
+            dict_text = page.get_text("dict", flags=flags)
+            
+            if dict_text and "blocks" in dict_text and len(dict_text["blocks"]) > 0:
+                text_blocks = []
+                
+                for block in dict_text["blocks"]:
+                    # Skip image blocks
+                    if block.get("type", 0) == 1:  # Image block
+                        continue
+                    
+                    if "lines" not in block:
+                        continue
+                        
+                    block_text = []
+                    for line in block["lines"]:
+                        if "spans" not in line:
+                            continue
+                            
+                        line_text = []
+                        for span in line["spans"]:
+                            if "text" in span and span["text"].strip():
+                                line_text.append(span["text"])
+                        
+                        if line_text:
+                            block_text.append(" ".join(line_text))
+                    
+                    if block_text:
+                        text_blocks.append("\n".join(block_text))
+                
+                if text_blocks:
+                    # Join blocks with double newlines to preserve paragraph structure
+                    text = "\n\n".join(text_blocks)
+                    if text.strip():
+                        return self._clean_text(text)
+            
+            # If dict mode didn't yield good results, try blocks mode
+            blocks = page.get_text("blocks", flags=flags)
+            if blocks:
+                # Sort blocks by vertical position (top to bottom)
+                sorted_blocks = sorted(blocks, key=lambda b: b[1])  # sort by y0 coordinate
+                
+                # Extract text and filter out empty blocks
+                text_blocks = [block[4] for block in sorted_blocks if block[4].strip()]
+                
+                if text_blocks:
+                    text = "\n\n".join(text_blocks)
+                    if text.strip():
+                        return self._clean_text(text)
+            
+            # If all else fails, fall back to simple text extraction
+            text = page.get_text("text", flags=flags)
+            if text.strip():
+                return self._clean_text(text)
+                
+            # Final fallback with no flags
+            return self._clean_text(page.get_text("text"))
+            
+        except Exception as e:
+            self._log(f"Error extracting text: {str(e)}")
+            
+            # Ultimate fallback
+            try:
+                return page.get_text()
+            except:
+                return ""
+    
+    def _detect_structure(self, text: str, page_num: int, total_pages: int) -> Dict[str, Any]:
+        """
+        Detect structural elements in the extracted text.
+        
+        Args:
+            text: The extracted text
+            page_num: Current page number (1-based)
+            total_pages: Total number of pages
+            
+        Returns:
+            Dictionary of detected structural elements
+        """
+        structure = {
+            'page_num': page_num,
+            'total_pages': total_pages,
+            'is_first_page': page_num == 1,
+            'is_last_page': page_num == total_pages,
+        }
+        
+        # Skip empty pages
+        if not text or not text.strip():
+            structure['empty_page'] = True
+            return structure
+        
+        # Split into lines for analysis
         lines = text.split('\n')
+        
+        # Check for headings
         for i, line in enumerate(lines):
             line = line.strip()
-            
-            # Skip empty lines
             if not line:
                 continue
                 
-            # Check for heading patterns
-            for pattern in heading_patterns:
-                if re.match(pattern, line, re.MULTILINE):
-                    structure['heading'] = line
-                    structure['heading_line'] = i
-                    break
-            
-            # Check for footer (typically has page number)
-            if re.search(r'\b(?:page|pg\.?)\s*\d+\b', line.lower()) or (
-                line.isdigit() and i > len(lines) - 3):
-                structure['footer'] = line
-                structure['footer_line'] = i
-            
-            # Check for bullet lists
-            if re.match(r'^\s*[•\-\*]\s+', line):
-                if 'bullet_points' not in structure:
-                    structure['bullet_points'] = []
-                structure['bullet_points'].append(line)
-        
-        # Check if this looks like a title page
-        if page_num == 1:
-            # Title pages often have few lines with larger gaps
-            if len(lines) < 10:
-                structure['title_page'] = True
-        
-        # Check if page is a table of contents
-        toc_indicators = ['table of contents', 'contents', 'toc']
-        for indicator in toc_indicators:
-            if indicator in text.lower() and (
-                # Often TOC pages have patterns like "Section....Page"
-                re.search(r'.+\s*\.{2,}\s*\d+', text) or
-                # Or they have indented hierarchical structure
-                text.count('\n\t') > 3
-            ):
-                structure['table_of_contents'] = True
+            # Check for chapter headings
+            if self.patterns['chapter_heading'].match(line):
+                structure['heading'] = line
+                structure['heading_type'] = 'chapter'
+                structure['heading_line'] = i
                 break
         
-        # Check for page break markers (form feed characters)
-        if '\f' in text:
-            structure['page_break'] = True
+        # Detect if this is likely a title page
+        if page_num == 1 and len(lines) < 10:
+            structure['possible_title_page'] = True
         
-        # Add metadata for page position
-        structure['page_position'] = {
-            'is_first_page': page_num == 1,
-            'is_last_page': page_num == total_pages,
-            'page_in_first_half': page_num <= total_pages / 2,
-            'page_in_last_quarter': page_num >= (total_pages * 0.75)
-        }
+        # Detect table of contents
+        toc_indicators = ['contents', 'table of contents', 'index']
+        if page_num <= 5:  # TOC usually within first few pages
+            for indicator in toc_indicators:
+                if indicator in text.lower():
+                    structure['table_of_contents'] = True
+                    break
+        
+        # Detect dialogue-heavy pages (common in Harry Potter)
+        dialogue_matches = self.patterns['dialogue'].findall(text)
+        if dialogue_matches and len(dialogue_matches) > 5:
+            structure['dialogue_heavy'] = True
+            structure['dialogue_count'] = len(dialogue_matches)
+        
+        # Detect character mentions
+        character_mentions = self.patterns['character_names'].findall(text)
+        if character_mentions:
+            structure['character_mentions'] = list(set([m.capitalize() for m in character_mentions]))
         
         return structure
     
-    # Extract text from PDF with structural information
-    def _extract_text_with_structure(self, reader: PdfReader, page_num: int, total_pages: int) -> Dict[str, Any]:
-        page = reader.pages[page_num]
-        text = page.extract_text() or ""
+    def _extract_page_metadata(self, doc: fitz.Document, page: fitz.Page, page_idx: int) -> Dict[str, Any]:
+        """
+        Extract detailed metadata from the PDF page.
         
-        if not text.strip():
-            return {
-                'text': "",
-                'structure': {'empty_page': True}
-            }
+        Args:
+            doc: PyMuPDF document object
+            page: PyMuPDF page object
+            page_idx: Page index (0-based)
             
-        # Extract page properties
-        mediabox = page.mediabox
-        page_width = float(mediabox.width)
-        page_height = float(mediabox.height)
+        Returns:
+            Dictionary of page metadata
+        """
+        metadata = {}
         
-        # Try to extract any available metadata for the page
-        page_properties = {
-            'width': page_width,
-            'height': page_height,
-            'aspect_ratio': page_width / page_height if page_height else 0,
-        }
+        # Basic page properties
+        metadata["page_number"] = page_idx + 1
+        metadata["total_pages"] = len(doc)
+        metadata["width"] = page.rect.width
+        metadata["height"] = page.rect.height
+        metadata["rotation"] = page.rotation
         
-        # Get structure information
-        structure = self._identify_structure(text, page_num + 1, total_pages)
-        structure['page_properties'] = page_properties
-        
-        # Try to extract font information if available
+        # Try to extract fonts information
         try:
-            if hasattr(page, 'fonts') and page.fonts:
-                structure['fonts'] = [str(font) for font in page.fonts]
-        except:
-            # Font extraction can fail - we don't want to break processing
-            pass
+            fonts = {}
+            for font in page.get_fonts():
+                font_name = font[3] if len(font) > 3 else "unknown"
+                font_type = font[0] if len(font) > 0 else "unknown"
+                if font_name not in fonts:
+                    fonts[font_name] = font_type
             
-        return {
-            'text': text,
-            'structure': structure
-        }
+            if fonts:
+                metadata["font_count"] = len(fonts)
+                # Convert dict to string to ensure it's serializable
+                metadata["fonts"] = ", ".join(fonts.keys())
+        except Exception as e:
+            self._log(f"Error extracting font information: {str(e)}")
+        
+        # Check for images on the page
+        try:
+            image_list = page.get_images()
+            metadata["has_images"] = len(image_list) > 0
+            metadata["image_count"] = len(image_list)
+        except Exception as e:
+            self._log(f"Error checking for images: {str(e)}")
+        
+        # Check for tables (approximation based on lines)
+        try:
+            horizontal_lines = 0
+            vertical_lines = 0
+            
+            for drawing in page.get_drawings():
+                if drawing["type"] == "l":  # line
+                    points = drawing["points"]
+                    if len(points) >= 2:
+                        x0, y0 = points[0]
+                        x1, y1 = points[1]
+                        
+                        if abs(y1 - y0) < 2:  # horizontal line
+                            horizontal_lines += 1
+                        elif abs(x1 - x0) < 2:  # vertical line
+                            vertical_lines += 1
+            
+            # If we have multiple horizontal and vertical lines, it might be a table
+            if horizontal_lines >= 3 and vertical_lines >= 3:
+                metadata["has_table"] = True
+                metadata["table_indicator"] = min(horizontal_lines, vertical_lines)
+            
+        except Exception as e:
+            self._log(f"Error detecting tables: {str(e)}")
+        
+        return metadata
     
-    # Clean the extracted text based on identified structure
-    def _clean_text(self, text: str, structure: Dict[str, Any]) -> str:
+    def _clean_text(self, text: str) -> str:
+        """
+        Clean and normalize extracted text.
+        
+        Args:
+            text: Raw extracted text
+            
+        Returns:
+            Cleaned text
+        """
         if not text:
             return ""
         
-        # Store the original text length for verification
+        # Store original length for verification
         original_length = len(text.strip())
         
-        # Make a copy of the text to work with
-        cleaned_text = text
+        # Remove excessive whitespace but preserve paragraph breaks
+        text = re.sub(r' {2,}', ' ', text)
+        text = re.sub(r'\n{3,}', '\n\n', text)
         
-        # If footer was identified, try to remove it but keep it in metadata
-        if 'footer' in structure and 'footer_line' in structure:
-            lines = cleaned_text.split('\n')
-            footer_line = structure['footer_line']
-            if 0 <= footer_line < len(lines):
-                # Store the footer in structure instead of removing it completely
-                structure['footer_text'] = lines[footer_line].strip()
-                # Replace with empty string but keep the line break
-                lines[footer_line] = ""
-                cleaned_text = '\n'.join(lines)
+        # Fix common PDF extraction issues
+        text = re.sub(r'([a-z])-\n([a-z])', r'\1\2', text)  # Fix hyphenation
+        text = re.sub(r'(\w)\s+\.\s+', r'\1. ', text)  # Fix spacing around periods
         
-        # Normalize whitespace (but don't remove it completely)
-        cleaned_text = re.sub(r'\n{3,}', '\n\n', cleaned_text)
-        cleaned_text = re.sub(r' {2,}', ' ', cleaned_text)
+        # Remove common PDF artifacts
+        text = re.sub(r'\(cid:\d+\)', '', text)  # Remove character ID markers
         
-        # Replace page break markers with paragraph breaks (don't remove)
-        cleaned_text = cleaned_text.replace('\f', '\n\n')
-        
-        # Verify we haven't lost significant content
-        final_length = len(cleaned_text.strip())
-        if final_length < original_length * 0.9:  # Allow for up to 10% reduction
-            # If we've lost too much content, revert to original
-            return text
-        
-        return cleaned_text.strip()
+        # Ensure we haven't lost significant content
+        cleaned_text = text.strip()
+        if len(cleaned_text) < original_length * 0.9:
+            # If we lost over 10% of content, revert to original
+            return text.strip()
+            
+        return cleaned_text
     
-    # Load the PDF and extract text with structural awareness
     def load(self) -> List[Document]:
+        """
+        Load the PDF and convert to a list of Document objects.
+        
+        Returns:
+            List of langchain Document objects
+        """
+        start_time = time.time()
+        documents = []
+        
+        file_name = os.path.basename(self.file_path)
+        file_id = os.path.splitext(file_name)[0]
+        
+        self._log(f"Processing PDF: {file_name}")
+        
         try:
-            start_time = time.time()
-            file_name = os.path.basename(self.file_path)
-            file_id = os.path.splitext(file_name)[0]
-            
-            if self.verbose:
-                print(f"📄 Processing PDF: {file_name}")
-            
-            # Initialize the PDF reader
-            reader = PdfReader(self.file_path)
-            total_pages = len(reader.pages)
-            
-            if self.verbose:
-                print(f"  - PDF has {total_pages} pages")
+            # Open the PDF document with PyMuPDF
+            with fitz.open(self.file_path) as doc:
+                total_pages = len(doc)
+                self._log(f"PDF has {total_pages} pages")
                 
-            # Extract text from pages with structure recognition
-            documents = []
-            
-            # Get document-level metadata
-            doc_metadata = {}
-            if reader.metadata:
-                for key, value in reader.metadata.items():
+                # Extract document-level metadata
+                doc_info = doc.metadata
+                doc_metadata = {}
+                for key, value in doc_info.items():
                     if value and isinstance(value, (str, int, float, bool)):
                         doc_metadata[f"pdf_{key}"] = value
-            
-            # Process each page
-            last_section = ""
-            current_section = ""
-            
-            for page_num, page in enumerate(reader.pages):
-                page_start = time.time()
-                if self.verbose and page_num % max(1, total_pages // 10) == 0:
-                    print(f"  - Processing page {page_num + 1}/{total_pages}...")
                 
-                # Extract text with structure
-                result = self._extract_text_with_structure(reader, page_num, total_pages)
-                text = result['text']
-                structure = result['structure']
+                # Process each page
+                current_section = ""
+                previous_section = ""
                 
-                if not text.strip():
-                    if self.verbose:
-                        print(f"    - Page {page_num + 1} is empty or contains no extractable text")
-                    continue
-                
-                # Clean text based on structure
-                text = self._clean_text(text, structure)
-                
-                # Update current section if a heading is detected
-                if 'heading' in structure:
-                    current_section = structure['heading']
-                
-                # Basic metadata for each page
-                metadata = {
-                    "source": self.file_path,
-                    "file_name": file_name,
-                    "file_id": file_id,
-                    "file_type": "pdf",
-                    "page_num": page_num + 1,
-                    "total_pages": total_pages,
-                    "current_section": current_section,
-                    "previous_section": last_section
-                }
-                
-                # Add structure information to metadata
-                structure_metadata = {
-                    f"struct_{k}": v for k, v in structure.items() 
-                    if k not in ['heading_line', 'footer_line', 'bullet_points', 'fonts', 'page_properties']
-                }
-                metadata.update(structure_metadata)
-                
-                # Add the document for this page
-                documents.append(Document(page_content=text, metadata=metadata))
-                
-                # Update tracking variables
-                last_section = current_section if current_section else last_section
-                
-                page_time = time.time() - page_start
-                if self.verbose and page_time > 2.0:  # Report if page took over 2 seconds
-                    print(f"    - Page {page_num + 1} processing took {page_time:.1f}s")
-            
-            # Add global PDF metadata to all documents
-            if documents and doc_metadata:
-                for doc in documents:
-                    doc.metadata.update(doc_metadata)
-            
-            # Final check - if we couldn't extract any documents, create one document with the entire raw text
-            if not documents:
-                if self.verbose:
-                    print(f"⚠️ No documents were extracted, creating one document with the entire PDF content")
-                
-                # Last resort: try to get raw text from the entire PDF
-                try:
-                    full_text = ""
-                    for page in reader.pages:
-                        page_text = page.extract_text() or ""
-                        if page_text.strip():
-                            full_text += page_text + "\n\n"
+                for page_idx, page in enumerate(doc):
+                    page_start = time.time()
+                    page_num = page_idx + 1
                     
-                    if full_text.strip():
-                        documents = [Document(
-                            page_content=full_text.strip(),
-                            metadata={
-                                "source": self.file_path,
-                                "file_name": file_name,
-                                "file_id": file_id,
-                                "file_type": "pdf",
-                                "total_pages": total_pages,
-                                "extraction_method": "full_pdf_fallback"
-                            }
-                        )]
-                except Exception as e:
-                    if self.verbose:
-                        print(f"❌ Fallback extraction failed: {str(e)}")
-            
-            total_time = time.time() - start_time
-            if self.verbose:
-                print(f"✅ PDF processed in {total_time:.2f}s, extracted {len(documents)} page documents")
-            
-            return documents
-            
+                    if self.verbose and page_idx % max(1, total_pages // 10) == 0:
+                        self._log(f"Processing page {page_num}/{total_pages}...")
+                    
+                    # Extract text with optimal method
+                    text = self._extract_text_with_optimal_method(page)
+                    
+                    # Skip empty pages
+                    if not text.strip():
+                        self._log(f"Page {page_num} is empty or contains no extractable text")
+                        continue
+                    
+                    # Detect structure
+                    structure = self._detect_structure(text, page_num, total_pages)
+                    
+                    # Update section tracking for navigation
+                    if 'heading' in structure:
+                        previous_section = current_section
+                        current_section = structure['heading']
+                    
+                    # Extract page metadata
+                    page_metadata = self._extract_page_metadata(doc, page, page_idx)
+                    
+                    # Prepare metadata for the document
+                    metadata = {
+                        "source": self.file_path,
+                        "file_name": file_name,
+                        "file_id": file_id,
+                        "file_type": "pdf",
+                        "page_num": page_num,
+                        "total_pages": total_pages,
+                        "current_section": current_section,
+                        "previous_section": previous_section
+                    }
+                    
+                    # Add structure information to metadata
+                    for k, v in structure.items():
+                        if k not in ['heading_line'] and isinstance(v, (str, int, float, bool, list)):
+                            metadata[f"struct_{k}"] = v
+                    
+                    # Add page metadata
+                    for k, v in page_metadata.items():
+                        if isinstance(v, (str, int, float, bool)):
+                            metadata[f"page_{k}"] = v
+                    
+                    # Add document-level metadata
+                    metadata.update(doc_metadata)
+                    
+                    # Create the Document object
+                    documents.append(Document(page_content=text, metadata=metadata))
+                    
+                    page_time = time.time() - page_start
+                    if self.verbose and page_time > 1.0:
+                        self._log(f"Page {page_num} processing took {page_time:.1f}s")
+                
+                # Check if we extracted content successfully
+                if not documents:
+                    self._log("Warning: No content extracted from PDF, trying fallback method")
+                    
+                    # Try a different extraction approach for the whole document
+                    try:
+                        all_text = ""
+                        for page_idx, page in enumerate(doc):
+                            # Try simplest extraction method
+                            text = page.get_text()
+                            if text.strip():
+                                all_text += f"\n\n--- Page {page_idx+1} ---\n\n" + text
+                        
+                        if all_text.strip():
+                            documents = [Document(
+                                page_content=all_text.strip(),
+                                metadata={
+                                    "source": self.file_path,
+                                    "file_name": file_name,
+                                    "file_id": file_id,
+                                    "file_type": "pdf",
+                                    "total_pages": total_pages,
+                                    "extraction_method": "full_pdf_fallback"
+                                }
+                            )]
+                            self._log("Successfully extracted content with fallback method")
+                    except Exception as e:
+                        self._log(f"Fallback extraction failed: {str(e)}")
+        
         except Exception as e:
-            print(f"❌ Error loading PDF file {self.file_path}: {str(e)}")
-            # Return an empty list instead of raising an exception to make the pipeline more robust
+            self._log(f"Error processing PDF: {str(e)}")
+            import traceback
+            self._log(traceback.format_exc())
             return []
+        
+        total_time = time.time() - start_time
+        self._log(f"PDF processed in {total_time:.2f}s, extracted {len(documents)} documents")
+        
+        return documents

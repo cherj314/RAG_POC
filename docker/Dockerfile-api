@@ -9,7 +9,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     python3-dev \
     curl \
-    poppler-utils \
+    # Dependencies for PyMuPDF
+    libmupdf-dev \
+    libfreetype6-dev \
+    libharfbuzz-dev \
+    libffi-dev \
+    # Clean up
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements file and install dependencies
@@ -18,7 +23,6 @@ COPY requirements.txt .
 # Install Python dependencies more efficiently
 # Pin versions to avoid unnecessary upgrades and use --no-cache-dir
 RUN pip install --no-cache-dir -r requirements.txt \
-    && pip install --no-cache-dir pypdf>=3.15.0 nltk>=3.8.1 \
     && pip install --no-cache-dir huggingface_hub[hf_xet]
 
 # Download only essential NLTK data instead of all data
