@@ -110,7 +110,7 @@ def perform_hybrid_search(conn, query: str, collection_id: str,
             """
             
             # Execute with parameters (simplified parameter list)
-            cur.execute(sql_query, (embedding.tolist(), collection_id, k * 2))
+            cur.execute(sql_query, (embedding.tolist(), collection_id, k))
             
             # Process results with combined scoring
             results = []
@@ -193,7 +193,7 @@ def search_postgres(query, k=5, similarity_threshold=0.3, debug=False):
             query=query,
             collection_id=collection_id,
             embedding=embedding,
-            k=k * 2,  # Get more initial results for filtering
+            k=k,  # Get more initial results for filtering
             similarity_threshold=similarity_threshold,
             debug=debug
         )
