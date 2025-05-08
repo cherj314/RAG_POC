@@ -307,9 +307,7 @@ class SemanticTextSplitter(TextSplitter):
             else:
                 # If there are no other chunks, keep this one even if it's small
                 final_chunks.append(small_chunk)
-        
-        self._log(f"Created {len(final_chunks)} narrative chunks after merging")
-        
+                
         return final_chunks
     
     # Split text into narrative-aware chunks optimized for fiction like Harry Potter

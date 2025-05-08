@@ -249,7 +249,8 @@ def find_documents():
     
     return doc_files
 
-# Process a single document file, extract metadata, and split into chunks
+# Update the process_document function in ingest.py
+
 def process_document(file_path):
     try:
         start_time = time.time()
@@ -260,7 +261,7 @@ def process_document(file_path):
         
         print(f"\n📄 Processing {file_name} ({file_size:.1f} KB)...")
         
-        # Store original file content for verification
+        # Store original file content for verification (only for text files)
         original_content = ""
         try:
             if file_extension.lower() != '.pdf':
@@ -269,8 +270,31 @@ def process_document(file_path):
         except Exception as e:
             print(f"  - Note: Could not read original file for verification: {str(e)}")
         
-        # Load the document based on file type
-        loader = PDFLoader(file_path, verbose=True) if file_extension == '.pdf' else TextLoader(file_path, encoding="utf-8")
+        # Load the document based on file type with optimized settings
+        if file_extension == '.pdf':
+            # Use optimized settings based on file size
+            if file_size > 10240:  # 10 MB
+                # For large PDFs: more parallelism, larger batches
+                max_workers = min(os.cpu_count() or 1, 8)  # Up to 8 workers
+                batch_size = 20
+            elif file_size > 5120:  # 5 MB
+                max_workers = min(os.cpu_count() or 1, 4)  # Up to 4 workers
+                batch_size = 15
+            else:
+                # Small PDFs: less parallelism to reduce overhead
+                max_workers = 2
+                batch_size = 10
+                
+            loader = PDFLoader(
+                file_path, 
+                verbose=True,
+                max_workers=max_workers,
+                batch_size=batch_size,
+                extract_images=False  # Don't extract image info for better performance
+            )
+        else:
+            loader = TextLoader(file_path, encoding="utf-8")
+            
         document = loader.load()
         
         if not document:
@@ -355,7 +379,7 @@ def process_document(file_path):
         print(f"❌ Error processing {file_path}: {str(e)}")
         print(f"Detailed error: {traceback.format_exc()}")
 
-# Process multiple documents using parallel processing when possible
+# Process multiple documents using optimized parallel processing
 def process_documents(doc_files):
     all_chunks = []
     
@@ -369,8 +393,15 @@ def process_documents(doc_files):
     # Sort files by type and size for better processing
     text_files = sorted([f for f in doc_files if f.lower().endswith('.txt')], 
                         key=os.path.getsize)
+    
+    # For PDFs, sort by size but also partition into size groups for optimal processing
     pdf_files = sorted([f for f in doc_files if f.lower().endswith('.pdf')], 
-                       key=os.path.getsize)
+                      key=os.path.getsize)
+    
+    # Separate PDFs into small, medium and large for optimized handling
+    small_pdfs = [f for f in pdf_files if os.path.getsize(f) < 2 * 1024 * 1024]  # < 2MB
+    medium_pdfs = [f for f in pdf_files if 2 * 1024 * 1024 <= os.path.getsize(f) < 10 * 1024 * 1024]  # 2-10MB
+    large_pdfs = [f for f in pdf_files if os.path.getsize(f) >= 10 * 1024 * 1024]  # > 10MB
     
     # Process text files in parallel
     if text_files:
@@ -378,14 +409,39 @@ def process_documents(doc_files):
         with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
             chunks_list = list(executor.map(process_document, text_files))
             for chunks in chunks_list:
-                all_chunks.extend(chunks)
+                all_chunks.extend(chunks if chunks else [])
     
-    # Process PDF files (one at a time to avoid memory issues)
-    if pdf_files:
-        print(f"📄 Processing {len(pdf_files)} PDF files...")
-        for pdf_file in pdf_files:
+    # Process small PDFs in parallel (they're small enough to handle concurrently)
+    if small_pdfs:
+        print(f"📄 Processing {len(small_pdfs)} small PDF files in parallel...")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(small_pdfs), MAX_WORKERS // 2)) as executor:
+            chunks_list = list(executor.map(process_document, small_pdfs))
+            for chunks in chunks_list:
+                all_chunks.extend(chunks if chunks else [])
+    
+    # Process medium PDFs with limited parallelism to avoid memory issues
+    if medium_pdfs:
+        print(f"📄 Processing {len(medium_pdfs)} medium-sized PDF files with limited parallelism...")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            chunks_list = list(executor.map(process_document, medium_pdfs))
+            for chunks in chunks_list:
+                all_chunks.extend(chunks if chunks else [])
+    
+    # Process large PDFs one at a time to avoid memory issues
+    if large_pdfs:
+        print(f"📄 Processing {len(large_pdfs)} large PDF files sequentially...")
+        for pdf_file in large_pdfs:
+            # Force garbage collection before processing large PDF
+            import gc
+            gc.collect()
+            
+            print(f"  - Processing large PDF: {os.path.basename(pdf_file)} ({os.path.getsize(pdf_file) / (1024 * 1024):.1f} MB)")
             chunks = process_document(pdf_file)
-            all_chunks.extend(chunks)
+            if chunks:
+                all_chunks.extend(chunks)
+                
+            # Force garbage collection after processing large PDF
+            gc.collect()
     
     total_time = time.time() - start_time
     if all_chunks:
@@ -394,7 +450,7 @@ def process_documents(doc_files):
         print("❌ No chunks were generated from documents")
     
     return all_chunks
-
+        
 # Store chunks in the vector database with batching
 def store_chunks_in_db(chunks, embeddings):
     if not chunks:
