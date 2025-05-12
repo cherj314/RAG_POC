@@ -64,7 +64,7 @@ class SemanticTextSplitter(TextSplitter):
         similarity_threshold: float = 0.6,
         min_chunk_size: int = 200,
         max_chunk_size: int = 800,
-        chunk_overlap: int = 100,
+        chunk_overlap: int = 200,  # Increased from 100
         respect_structure: bool = True,
         verbose: bool = False
     ):
@@ -91,9 +91,11 @@ class SemanticTextSplitter(TextSplitter):
             self._log("Falling back to basic model initialization")
             self.embedding_model = SentenceTransformer(embedding_model)
         
-        # Compile structural patterns - focusing on just key patterns
+        # Compile structural patterns
         self.chapter_pattern = re.compile(r'^(?:CHAPTER|Chapter)\s+[A-Z0-9]+(?:\s+[A-Z].*)?$', re.MULTILINE)
         self.scene_break_pattern = re.compile(r'^[\s*#_\-]{3,}$', re.MULTILINE)
+        self.page_number_pattern = re.compile(r'^\d+$', re.MULTILINE)
+        self.book_title_pattern = re.compile(r'^HARRY POTTER.*$', re.MULTILINE)
     
     def _log(self, message: str) -> None:
         """Log messages if verbose mode is enabled."""
@@ -126,7 +128,6 @@ class SemanticTextSplitter(TextSplitter):
             
             # Calculate similarity
             similarity = self._calculate_similarity(embedding1, embedding2)
-            self._log(f"Semantic similarity: {similarity:.4f} (threshold: {self.similarity_threshold})")
             
             return similarity >= self.similarity_threshold
         except Exception as e:
@@ -134,49 +135,68 @@ class SemanticTextSplitter(TextSplitter):
             return True
     
     def split_text(self, text: str) -> List[str]:
-        """
-        Split text into chunks while respecting sentence boundaries.
-        """
+        """Split text into chunks while respecting sentence boundaries."""
         if not text or not text.strip():
             return []
+        
+        # Remove page numbers and headers first
+        text = self.page_number_pattern.sub('', text)
+        text = self.book_title_pattern.sub('', text)
         
         # Normalize line breaks and whitespace
         text = re.sub(r'\r\n', '\n', text)
         text = re.sub(r'\n{3,}', '\n\n', text)
         
-        # Extract sentences from the text - use our custom implementation
+        # Add explicit handling for dialogue and quotes which might confuse sentence tokenizers
+        text = re.sub(r'([.!?])"(\s)', r'\1" \2', text)  # Fix quotes after sentence endings
+        
+        # Better regex for sentence splitting as fallback
+        def better_sentence_split(text):
+            # More robust regex that handles various edge cases
+            pattern = r'(?<=[.!?])\s+(?=[A-Z])'
+            sentences = re.split(pattern, text)
+            
+            # Further process each potential sentence to avoid fragments
+            result = []
+            buffer = ""
+            for sent in sentences:
+                # Check if this looks like a complete sentence
+                if re.search(r'[.!?]\s*$', sent) or len(sent) > 100:
+                    if buffer:
+                        result.append(buffer + " " + sent)
+                        buffer = ""
+                    else:
+                        result.append(sent)
+                else:
+                    if buffer:
+                        buffer += " " + sent
+                    else:
+                        buffer = sent
+            
+            # Add any remaining buffer
+            if buffer:
+                result.append(buffer)
+                
+            return result
+        
         try:
-            # Force the use of punkt rather than punkt_tab by direct call to the punkt
-            # tokenizer rather than through sent_tokenize which might try to use punkt_tab
-            try:
-                from nltk.tokenize import PunktSentenceTokenizer
-                tokenizer = PunktSentenceTokenizer()
-                sentences = tokenizer.tokenize(text)
-                self._log(f"NLTK PunktSentenceTokenizer used directly - {len(sentences)} sentences")
-            except Exception as direct_e:
-                self._log(f"Direct PunktSentenceTokenizer failed: {str(direct_e)}. Trying sent_tokenize...")
-                sentences = nltk.sent_tokenize(text)
-                self._log(f"NLTK sent_tokenize used - {len(sentences)} sentences")
+            from nltk.tokenize import PunktSentenceTokenizer
+            tokenizer = PunktSentenceTokenizer()
+            sentences = tokenizer.tokenize(text)
         except Exception as e:
             self._log(f"NLTK tokenization failed: {str(e)}. Using fallback.")
-            sentences = basic_sentence_split(text)
-            self._log(f"Fallback tokenized text into {len(sentences)} sentences")
-        
-        # Handle the case of no sentences or single massive sentence
-        if not sentences:
-            return []
-        
-        # If we only got one very long sentence, try to break it up further
-        if len(sentences) == 1 and len(sentences[0]) > self.max_chunk_size * 2:
-            self._log("Single long sentence detected - trying alternative splitting")
-            sentences = basic_sentence_split(text)
-            self._log(f"Alternative splitting produced {len(sentences)} sentences")
+            sentences = better_sentence_split(text)
         
         # Process sentences into semantically coherent chunks
-        return self._group_sentences_semantically(sentences)
-    
+        chunks = self._group_sentences_semantically(sentences)
+        
+        # Apply post-processing to ensure complete sentences
+        chunks = self._ensure_complete_sentences(chunks)
+        
+        return chunks
+  
     def _group_sentences_semantically(self, sentences: List[str]) -> List[str]:
-        """Group sentences into semantically coherent chunks while respecting size limits."""
+        """Group sentences into semantically coherent chunks while respecting sentence boundaries."""
         if not sentences:
             return []
         
@@ -187,29 +207,15 @@ class SemanticTextSplitter(TextSplitter):
         for i in range(1, len(sentences)):
             # Check if adding this sentence would exceed size limit
             if len(current_chunk) + len(sentences[i]) + 1 > self.max_chunk_size:
+                # Never break in the middle of a sentence - complete the current chunk
                 chunks.append(current_chunk)
                 current_chunk = sentences[i]
                 current_sentences = [sentences[i]]
             else:
-                # Check semantic similarity 
-                if len(current_chunk) > 100:
-                    if self._is_semantically_similar(current_chunk, sentences[i]):
-                        current_chunk += " " + sentences[i]
-                        current_sentences.append(sentences[i])
-                    else:
-                        # If not similar, check if current chunk is large enough
-                        if len(current_chunk) >= self.min_chunk_size:
-                            chunks.append(current_chunk)
-                            current_chunk = sentences[i]
-                            current_sentences = [sentences[i]]
-                        else:
-                            # If too small, add anyway to avoid tiny chunks
-                            current_chunk += " " + sentences[i]
-                            current_sentences.append(sentences[i])
-                else:
-                    # Just add it for short chunks
-                    current_chunk += " " + sentences[i]
-                    current_sentences.append(sentences[i])
+                # ALWAYS add the complete sentence to the current chunk, regardless of semantic similarity
+                # This ensures we never break sentences
+                current_chunk += " " + sentences[i]
+                current_sentences.append(sentences[i])
         
         # Add the last chunk
         if current_chunk:
@@ -275,6 +281,44 @@ class SemanticTextSplitter(TextSplitter):
             
         return result
     
+    def _ensure_complete_sentences(self, chunks: List[str]) -> List[str]:
+        """Fix chunks to ensure they start and end with complete sentences."""
+        if not chunks:
+            return []
+
+        result = []
+        
+        for i, chunk in enumerate(chunks):
+            # Skip empty chunks
+            if not chunk.strip():
+                continue
+                
+            # Fix chunks that start with lowercase (likely mid-sentence)
+            if chunk and chunk[0].islower() and i > 0 and result:
+                # Try to find the last sentence in the previous chunk
+                prev_chunk = result[-1]
+                prev_sentences = re.split(r'(?<=[.!?])\s+', prev_chunk)
+                
+                if prev_sentences and not prev_chunk.endswith(('.', '!', '?', '."', '!"', '?"')):
+                    # Take the incomplete sentence from previous chunk
+                    incomplete_sent = prev_sentences[-1]
+                    
+                    # Find where to split the current chunk
+                    current_sentences = re.split(r'(?<=[.!?])\s+', chunk)
+                    if current_sentences:
+                        # Complete the sentence
+                        completed_sent = incomplete_sent + " " + current_sentences[0]
+                        
+                        # Update previous chunk without the incomplete sentence
+                        result[-1] = " ".join(prev_sentences[:-1])
+                        
+                        # Update current chunk with the completed sentence
+                        chunk = completed_sent + " " + " ".join(current_sentences[1:])
+        
+            result.append(chunk)
+    
+        return result
+    
     def create_documents(
         self, texts: List[str], metadatas: Optional[List[dict]] = None
     ) -> List[Document]:
@@ -309,4 +353,16 @@ class SemanticTextSplitter(TextSplitter):
         texts = [doc.page_content for doc in documents]
         metadatas = [doc.metadata for doc in documents]
         
-        return self.create_documents(texts, metadatas)
+        split_docs = self.create_documents(texts, metadatas)
+        
+        # Add post-processing to fix sentence boundaries
+        if split_docs:
+            chunks = [doc.page_content for doc in split_docs]
+            fixed_chunks = self._ensure_complete_sentences(chunks)
+            
+            # Update the document chunks with fixed content
+            for i, fixed_chunk in enumerate(fixed_chunks):
+                if i < len(split_docs):
+                    split_docs[i].page_content = fixed_chunk
+        
+        return split_docs

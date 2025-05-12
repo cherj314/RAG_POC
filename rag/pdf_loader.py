@@ -16,11 +16,14 @@ class PDFLoader:
         self.max_workers = max_workers
         self.batch_size = batch_size
         self.extract_images = extract_images
+        self._current_chapter = None
         
         # Essential patterns for structure detection - minimized for performance
         self.patterns = {
             'chapter_heading': re.compile(r'^(?:CHAPTER|Chapter)\s+[A-Z0-9]+(?:\s+[A-Z].*)?$', re.MULTILINE),
-            'header_footer': re.compile(r'^\s*(?:\d+|Page \d+|[A-Za-z\s]+ \d+)\s*$')
+            'header_footer': re.compile(r'^\s*(?:\d+|Page \d+|[A-Za-z\s]+ \d+)\s*$'),
+            'page_number': re.compile(r'^\d+$'),
+            'book_title': re.compile(r'^HARRY POTTER.*$')
         }
     
     def _log(self, message: str) -> None:
@@ -39,25 +42,89 @@ class PDFLoader:
                 # Sort blocks by vertical position (top to bottom)
                 sorted_blocks = sorted(blocks, key=lambda b: b[1])
                 
-                # Extract text and filter out empty blocks
-                text_blocks = [block[4] for block in sorted_blocks if block[4].strip()]
+                # Extract text and filter out empty blocks and headers
+                text_blocks = []
+                
+                for block in sorted_blocks:
+                    text = block[4].strip()
+                    if not text:
+                        continue
+                        
+                    # Skip page numbers
+                    if self.patterns['page_number'].match(text):
+                        continue
+                        
+                    # Skip "HARRY POTTER" headers
+                    if self.patterns['book_title'].match(text):
+                        continue
+                        
+                    # Skip chapter headers but store them as metadata
+                    if self.patterns['chapter_heading'].match(text):
+                        self._current_chapter = text
+                        continue
+                        
+                    text_blocks.append(text)
                 
                 if text_blocks:
-                    text = "\n\n".join(text_blocks)
+                    # Process blocks to handle mid-sentence breaks
+                    for i in range(len(text_blocks) - 1):
+                        if not re.search(r'[.!?:]\s*$', text_blocks[i]) and re.match(r'^\s*[a-z]', text_blocks[i+1]):
+                            # This block likely ends mid-sentence and next block starts with continuation
+                            text_blocks[i] += " " + text_blocks[i+1]
+                            text_blocks[i+1] = ""
+                    
+                    # Filter out any empty blocks and join
+                    text = "\n\n".join([b for b in text_blocks if b.strip()])
                     return self._clean_text(text)
             
-            # Fall back to plain text as a reliable method
+            # Fall back to text mode with header cleaning
             text = page.get_text("text", flags=flags)
-            return self._clean_text(text)
-            
+            return self._clean_headers_and_footers(text)
+        
         except Exception as e:
             self._log(f"Error extracting text: {str(e)}")
             
             # Ultimate fallback
             try:
-                return page.get_text()
+                return self._clean_headers_and_footers(page.get_text())
             except:
                 return ""
+    
+    # Clean headers and footers from the text
+    def _clean_headers_and_footers(self, text):
+        """Clean page headers, numbers and footers from the text."""
+        if not text:
+            return ""
+            
+        # Split text into lines
+        lines = text.split('\n')
+        cleaned_lines = []
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+                
+            # Skip page numbers
+            if self.patterns['page_number'].match(line):
+                continue
+                
+            # Skip "HARRY POTTER" headers
+            if self.patterns['book_title'].match(line):
+                continue
+                
+            # Skip chapter titles (store in metadata but don't include in text)
+            if self.patterns['chapter_heading'].match(line):
+                self._current_chapter = line
+                continue
+                
+            # Add the clean line
+            cleaned_lines.append(line)
+        
+        # Join the clean lines and normalize whitespace
+        clean_text = '\n'.join(cleaned_lines)
+        clean_text = re.sub(r'\n{3,}', '\n\n', clean_text)  # Normalize multiple line breaks
+        return clean_text.strip()
     
     # Clean and normalize extracted text
     def _clean_text(self, text: str) -> str:
@@ -75,6 +142,10 @@ class PDFLoader:
             "page_number": page_idx + 1,
             "total_pages": len(doc),
         }
+        
+        # Add current chapter if available
+        if self._current_chapter:
+            metadata["current_chapter"] = self._current_chapter
         
         # Only extract font and image info if explicitly requested
         if self.extract_images:
@@ -109,11 +180,6 @@ class PDFLoader:
                 "file_id": file_id,
                 "file_type": "pdf",
             })
-            
-            # Check for chapter headings - important for document structure
-            chapter_match = self.patterns['chapter_heading'].search(text)
-            if chapter_match:
-                metadata["current_section"] = chapter_match.group(0)
             
             # Create document
             return Document(page_content=text, metadata=metadata)
@@ -178,9 +244,9 @@ class PDFLoader:
                     # Simple extraction for the whole document as fallback
                     all_text = ""
                     for page_idx in range(min(50, total_pages)):  # Limit to first 50 pages for speed
-                        text = doc[page_idx].get_text()
+                        text = self._clean_headers_and_footers(doc[page_idx].get_text())
                         if text.strip():
-                            all_text += f"\n\n--- Page {page_idx+1} ---\n\n" + text
+                            all_text += f"\n\n" + text
                     
                     if all_text.strip():
                         documents = [Document(

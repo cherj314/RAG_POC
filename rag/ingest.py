@@ -30,7 +30,7 @@ EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL")
 # Chunking configuration
 MIN_CHUNK_SIZE = int(os.getenv("MIN_CHUNK_SIZE", "200"))
 MAX_CHUNK_SIZE = int(os.getenv("MAX_CHUNK_SIZE", "800"))
-CHUNK_OVERLAP = 100
+CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "200"))  # Default to 200 if not set
 SEMANTIC_SIMILARITY = float(os.getenv("SEMANTIC_SIMILARITY", "0.6"))
 RESPECT_STRUCTURE = os.getenv("RESPECT_STRUCTURE", "true").lower()
 
@@ -41,6 +41,56 @@ MAX_WORKERS = int(os.getenv("MAX_WORKERS"))
 
 # Database connection string
 CONNECTION_STRING = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+
+def preprocess_text(text):
+    """Clean up text content to remove headers, footers and page numbers."""
+    lines = text.split('\n')
+    cleaned_lines = []
+    
+    # Enhanced regex patterns for better detection
+    header_patterns = [
+        re.compile(r'^(CHAPTER|Chapter)\s+[\dIVXLC]+'),  # Chapter headings
+        re.compile(r'^THE\s+[A-Z\s]+$'),                 # ALL CAPS chapter titles
+        re.compile(r'HARRY POTTER'),                     # Book title in header
+        re.compile(r'^Page\s+\d+\s+of\s+\d+$')           # Page X of Y format
+    ]
+    
+    page_number_pattern = re.compile(r'^\s*\d+\s*$')     # Standalone numbers (page numbers)
+    
+    for line in lines:
+        line = line.strip()
+        
+        # Skip empty lines but preserve paragraph structure
+        if not line:
+            cleaned_lines.append('')
+            continue
+            
+        # Skip page numbers
+        if page_number_pattern.match(line):
+            continue
+            
+        # Check against all header patterns
+        is_header = False
+        for pattern in header_patterns:
+            if pattern.search(line):
+                is_header = True
+                break
+                
+        if is_header:
+            continue
+            
+        # Clean footer (usually at bottom of page, often contains page numbers)
+        # This is a simple heuristic - footers often start with specific markers
+        if line.startswith("Copyright ©") or line.startswith("www.") or line.endswith("Publishing"):
+            continue
+            
+        cleaned_lines.append(line)
+    
+    # Join the clean lines and normalize whitespace
+    clean_text = '\n'.join(cleaned_lines)
+    clean_text = re.sub(r'\n{3,}', '\n\n', clean_text)  # Normalize multiple line breaks
+    
+    return clean_text.strip()
 
 # Set up the PostgreSQL database with pgvector extension and optimizations
 def setup_database():
@@ -225,9 +275,10 @@ def create_text_splitter(file_extension=""):
         
         return RecursiveCharacterTextSplitter(
             chunk_size=800,
-            chunk_overlap=100,
+            chunk_overlap=200,
             separators=["\n\n", "\n", ". ", "! ", "? ", ";", ":", " ", ""]
         )
+
 # Find all document files to be processed
 def find_documents():
     if not os.path.exists(DOCS_DIR):
@@ -244,8 +295,49 @@ def find_documents():
     
     return doc_files
 
-# Update the process_document function in ingest.py
+# Function to ensure complete sentences in chunks
+def ensure_complete_sentences(chunks):
+    """Ensure chunks start and end with complete sentences."""
+    if not chunks:
+        return chunks
+    
+    processed_chunks = []
+    
+    for i, chunk in enumerate(chunks):
+        content = chunk.page_content
+        
+        # Check if chunk starts with lowercase letter (likely mid-sentence)
+        if content and content[0].islower() and i > 0 and processed_chunks:
+            # Find the last sentence of the previous chunk
+            prev_content = processed_chunks[-1].page_content
+            sentences = re.split(r'(?<=[.!?])\s+', prev_content)
+            
+            if sentences and not prev_content.endswith(('.', '!', '?', '."', '!"', '?"')):
+                # Take the incomplete sentence from previous chunk
+                incomplete_sent = sentences[-1]
+                
+                # Find where to split the current chunk
+                current_sentences = re.split(r'(?<=[.!?])\s+', content)
+                if current_sentences:
+                    # Complete the sentence
+                    completed_sent = incomplete_sent + " " + current_sentences[0]
+                    
+                    # Update previous chunk without the incomplete sentence
+                    processed_chunks[-1].page_content = " ".join(sentences[:-1])
+                    
+                    # Update current chunk with the completed sentence
+                    chunk.page_content = completed_sent + " " + " ".join(current_sentences[1:])
+        
+        # Check if chunk ends without sentence-ending punctuation
+        if content and not re.search(r'[.!?]"\s*$', content) and not re.search(r'[.!?]\s*$', content) and i < len(chunks) - 1:
+            # This chunk ends mid-sentence, but we'll handle it in the next iteration
+            pass
+            
+        processed_chunks.append(chunk)
+    
+    return processed_chunks
 
+# Update the process_document function in ingest.py
 def process_document(file_path):
     try:
         start_time = time.time()
@@ -287,10 +379,40 @@ def process_document(file_path):
                 batch_size=batch_size,
                 extract_images=False  # Don't extract image info for better performance
             )
-        else:
-            loader = TextLoader(file_path, encoding="utf-8")
+            document = loader.load()
             
-        document = loader.load()
+            # Extra cleaning pass to remove any remaining headers/footers
+            # that might have been missed by the PDF loader
+            clean_document = []
+            for doc in document:
+                if doc.page_content:
+                    cleaned_content = preprocess_text(doc.page_content)
+                    # Only add if there's meaningful content after cleaning
+                    if cleaned_content.strip():
+                        doc.page_content = cleaned_content
+                        clean_document.append(doc)
+                    else:
+                        print(f"  - Skipping empty document segment after cleaning")
+            
+            document = clean_document
+        else:
+            # For text files, first read content and preprocess
+            with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+                original_content = f.read()
+                
+            # Apply preprocessing to text files to remove headers
+            preprocessed_content = preprocess_text(original_content)
+            
+            # Create document from preprocessed content
+            document = [Document(
+                page_content=preprocessed_content,
+                metadata={
+                    "source": file_path,
+                    "file_name": file_name,
+                    "file_id": file_id,
+                    "file_extension": file_extension,
+                }
+            )]
         
         if not document:
             print(f"❌ Failed to extract any content from {file_name}")
@@ -298,8 +420,9 @@ def process_document(file_path):
             # Last resort for non-PDF files: create a single document with the whole file
             if original_content and file_extension.lower() != '.pdf':
                 print(f"  - Creating emergency document with entire file content")
+                cleaned_content = preprocess_text(original_content)
                 document = [Document(
-                    page_content=original_content,
+                    page_content=cleaned_content,
                     metadata={
                         "source": file_path,
                         "file_name": file_name,
@@ -328,14 +451,65 @@ def process_document(file_path):
         try:
             chunks = text_splitter.split_documents(document)
             
+            # Apply post-processing to ensure complete sentences and remove any leftover headers
+            chunks = ensure_complete_sentences(chunks)
+            
+            # Additional filter to remove any chunks that are just headers, page numbers, etc.
+            # (very short chunks, or chunks that match our header patterns)
+            filtered_chunks = []
+            header_patterns = [
+                re.compile(r'^(?:CHAPTER|Chapter)\s+[\dIVXLC]+'),
+                re.compile(r'^THE\s+[A-Z\s]+$'),
+                re.compile(r'HARRY POTTER'),
+                re.compile(r'^Page\s+\d+\s+of\s+\d+$')
+            ]
+            page_number_pattern = re.compile(r'^\s*\d+\s*$')
+            
+            for chunk in chunks:
+                chunk_content = chunk.page_content.strip()
+                
+                # Skip very short chunks (likely just headers or page numbers)
+                if len(chunk_content) < MIN_CHUNK_SIZE * 0.5:
+                    print(f"  - Filtering out short chunk ({len(chunk_content)} chars)")
+                    continue
+                
+                # Check if chunk is predominantly headers or page numbers
+                lines = chunk_content.split('\n')
+                header_line_count = 0
+                
+                for line in lines:
+                    is_header = False
+                    if page_number_pattern.match(line):
+                        is_header = True
+                    else:
+                        for pattern in header_patterns:
+                            if pattern.search(line):
+                                is_header = True
+                                break
+                    
+                    if is_header:
+                        header_line_count += 1
+                
+                # If more than 40% of lines are headers, skip this chunk
+                if lines and header_line_count / len(lines) > 0.4:
+                    print(f"  - Filtering out header-heavy chunk ({header_line_count}/{len(lines)} lines)")
+                    continue
+                
+                filtered_chunks.append(chunk)
+            
+            chunks = filtered_chunks
+            
             # Verify chunk content covers the entire original document
             if chunks:
                 # Check chunk coverage for text files (PDFs are harder to verify)
                 if original_content and file_extension.lower() != '.pdf':
+                    # Clean the original content first for fair comparison
+                    cleaned_original = preprocess_text(original_content)
                     total_chunks_content = " ".join([chunk.page_content for chunk in chunks])
+                    
                     # Normalize whitespace for comparison
                     chunks_content = re.sub(r'\s+', ' ', total_chunks_content).strip()
-                    original_normalized = re.sub(r'\s+', ' ', original_content).strip()
+                    original_normalized = re.sub(r'\s+', ' ', cleaned_original).strip()
                     
                     # Calculate content coverage
                     coverage_ratio = len(chunks_content) / len(original_normalized) if len(original_normalized) > 0 else 0
@@ -344,8 +518,9 @@ def process_document(file_path):
                     # If we've lost significant content, fall back to a single chunk with the entire document
                     if coverage_ratio < 0.9 and len(original_normalized) > 0:
                         print(f"  - Warning: Content coverage below 90%, adding full document as an additional chunk")
+                        # Add the cleaned original content, not the raw original
                         chunks.append(Document(
-                            page_content=original_content,
+                            page_content=cleaned_original,
                             metadata={
                                 "source": file_path,
                                 "file_name": file_name,
@@ -372,6 +547,7 @@ def process_document(file_path):
             
     except Exception as e:
         print(f"❌ Error processing {file_path}: {str(e)}")
+        print(f"Detailed error: {traceback.format_exc()}")
         print(f"Detailed error: {traceback.format_exc()}")
 
 # Process multiple documents using optimized parallel processing
