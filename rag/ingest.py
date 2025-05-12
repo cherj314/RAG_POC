@@ -28,13 +28,11 @@ COLLECTION_NAME = os.getenv("COLLECTION_NAME")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL")
 
 # Chunking configuration
-CHUNKING_STRATEGY = os.getenv("CHUNKING_STRATEGY").lower()
-CHUNK_SIZE = int(os.getenv("CHUNK_SIZE"))
-CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP"))
-MIN_CHUNK_SIZE = int(os.getenv("MIN_CHUNK_SIZE"))
-MAX_CHUNK_SIZE = int(os.getenv("MAX_CHUNK_SIZE"))
-SEMANTIC_SIMILARITY = float(os.getenv("SEMANTIC_SIMILARITY"))
-RESPECT_STRUCTURE = os.getenv("RESPECT_STRUCTURE").lower()
+MIN_CHUNK_SIZE = int(os.getenv("MIN_CHUNK_SIZE", "200"))
+MAX_CHUNK_SIZE = int(os.getenv("MAX_CHUNK_SIZE", "800"))
+CHUNK_OVERLAP = 100
+SEMANTIC_SIMILARITY = float(os.getenv("SEMANTIC_SIMILARITY", "0.6"))
+RESPECT_STRUCTURE = os.getenv("RESPECT_STRUCTURE", "true").lower()
 
 # Processing parameters
 DOCS_DIR = os.getenv("DOCS_DIR")
@@ -205,34 +203,31 @@ def setup_database():
     
     print(f"✅ Database setup completed in {time.time() - start_time:.2f}s")
 
-# Create the appropriate text splitter based on configuration
+# Create a semantic text splitter 
 def create_text_splitter(file_extension=""):
-    # Try to use semantic chunking if selected
-    if CHUNKING_STRATEGY == "semantic" and SemanticTextSplitter is not None:
-        try:
-            print(f"  - Using semantic chunking (similarity threshold: {SEMANTIC_SIMILARITY})")
-            return SemanticTextSplitter(
-                embedding_model=EMBEDDING_MODEL,
-                similarity_threshold=SEMANTIC_SIMILARITY,
-                min_chunk_size=MIN_CHUNK_SIZE,
-                max_chunk_size=MAX_CHUNK_SIZE if file_extension != '.pdf' else MAX_CHUNK_SIZE + 200,
-                chunk_overlap=CHUNK_OVERLAP,
-                respect_structure=RESPECT_STRUCTURE,
-                verbose=True
-            )
-        except Exception as e:
-            print(f"⚠️ Error initializing semantic chunker: {str(e)}")
-            print("  - Falling back to fixed-size chunking")
-    
-    # Fall back to fixed-size chunking
-    chunk_size = CHUNK_SIZE + 200 if file_extension == '.pdf' else CHUNK_SIZE
-    print(f"  - Using fixed-size chunking (size={chunk_size}, overlap={CHUNK_OVERLAP})")
-    return RecursiveCharacterTextSplitter(
-        chunk_size=chunk_size,
-        chunk_overlap=CHUNK_OVERLAP,
-        separators=["\n\n", "\n", ". ", "! ", "? ", ";", ":", " ", ""]
-    )
-
+    try:
+        print(f"  - Using semantic chunking (similarity threshold: {SEMANTIC_SIMILARITY})")
+        return SemanticTextSplitter(
+            embedding_model=EMBEDDING_MODEL,
+            similarity_threshold=SEMANTIC_SIMILARITY,
+            min_chunk_size=MIN_CHUNK_SIZE,
+            max_chunk_size=MAX_CHUNK_SIZE,
+            chunk_overlap=CHUNK_OVERLAP,
+            respect_structure=RESPECT_STRUCTURE,
+            verbose=True
+        )
+    except Exception as e:
+        print(f"⚠️ Error initializing semantic chunker: {str(e)}")
+        
+        # Emergency fallback - create a minimal version
+        print(f"  - Using emergency fallback chunker")
+        from langchain.text_splitter import RecursiveCharacterTextSplitter
+        
+        return RecursiveCharacterTextSplitter(
+            chunk_size=800,
+            chunk_overlap=100,
+            separators=["\n\n", "\n", ". ", "! ", "? ", ";", ":", " ", ""]
+        )
 # Find all document files to be processed
 def find_documents():
     if not os.path.exists(DOCS_DIR):

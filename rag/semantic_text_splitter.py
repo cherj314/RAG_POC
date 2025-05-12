@@ -1,30 +1,71 @@
-import nltk, torch, re, numpy as np
-from typing import List, Optional, Dict
+import os, nltk, torch, re, numpy as np
+from typing import List, Optional
 from langchain.text_splitter import TextSplitter
 from langchain.docstore.document import Document
 from sentence_transformers import SentenceTransformer
 
-# Download only the necessary NLTK data package instead of all data
-try:
-    nltk.data.find('tokenizers/punkt')
-except LookupError:
-    nltk.download('punkt', quiet=True)
+# Define and set up NLTK data directory
+nltk_data_dir = os.getenv('NLTK_DATA', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'nltk_data'))
+os.makedirs(nltk_data_dir, exist_ok=True)
+nltk.data.path.insert(0, nltk_data_dir)
 
-# Split text based on narrative structure and semantic meaning for fiction texts
-class SemanticTextSplitter(TextSplitter):
+# Try to download the correct NLTK data
+try:
+    # First check for punkt (the standard tokenizer)
+    try:
+        nltk.data.find('tokenizers/punkt')
+        print("NLTK punkt tokenizer already downloaded.")
+    except LookupError:
+        print(f"Downloading NLTK punkt tokenizer to {nltk_data_dir}...")
+        nltk.download('punkt', download_dir=nltk_data_dir, quiet=False)
     
-    # Initialize the semantic text splitter optimized for narrative texts
+    # Now specifically try to handle punkt_tab
+    try:
+        nltk.data.find('tokenizers/punkt_tab')
+    except LookupError:
+        print(f"Attempting to ensure punkt_tab is available...")
+        # Standard punkt should include punkt_tab, but we'll make sure the punkt download was successful
+        if os.path.exists(os.path.join(nltk_data_dir, 'tokenizers', 'punkt')):
+            print("punkt tokenizer is available, which should contain punkt_tab")
+except Exception as e:
+    print(f"Warning: Error setting up NLTK: {str(e)}")
+    print("Proceeding with fallback sentence splitting.")
+
+# Define a robust sentence splitter as fallback
+def basic_sentence_split(text):
+    """Split text into sentences using basic regex patterns that mimic NLTK's behavior."""
+    # Clean up the text first
+    text = re.sub(r'\s+', ' ', text)
+    
+    # Split by common sentence ending punctuation followed by a space and capital letter
+    pattern = r'(?<=[.!?])\s+(?=[A-Z])'
+    sentences = re.split(pattern, text)
+    
+    # Further split by common sentence ending marks
+    final_sentences = []
+    for sentence in sentences:
+        # Split by line breaks that might indicate sentence breaks
+        parts = re.split(r'\n{2,}', sentence)
+        for part in parts:
+            if part.strip():
+                final_sentences.append(part.strip())
+    
+    return final_sentences if final_sentences else [text]
+
+class SemanticTextSplitter(TextSplitter):
+    """
+    A text splitter that creates chunks based on semantic similarity
+    while ensuring chunks respect sentence boundaries.
+    """
+    
     def __init__(
         self,
-        embedding_model: str = "sentence-transformers/all-mpnet-base-v2",  # Upgraded model
-        similarity_threshold: float = 0.6,  # Higher threshold for narrative consistency
+        embedding_model: str = "sentence-transformers/all-mpnet-base-v2",
+        similarity_threshold: float = 0.6,
         min_chunk_size: int = 200,
-        max_chunk_size: int = 800,  # Larger chunk size for narrative context
-        chunk_overlap: int = 100,  # Increased overlap for continuity
-        paragraph_separator: str = "\n\n",
-        sentence_separator: str = "\n",
+        max_chunk_size: int = 800,
+        chunk_overlap: int = 100,
         respect_structure: bool = True,
-        preserve_dialogue: bool = True,  # New parameter for dialogue handling
         verbose: bool = False
     ):
         super().__init__(
@@ -36,16 +77,10 @@ class SemanticTextSplitter(TextSplitter):
         self.min_chunk_size = min_chunk_size
         self.max_chunk_size = max_chunk_size
         self.chunk_overlap = chunk_overlap
-        self.paragraph_separator = paragraph_separator
-        self.sentence_separator = sentence_separator
         self.respect_structure = respect_structure
-        self.preserve_dialogue = preserve_dialogue
         self.verbose = verbose
         
-        # Structural patterns optimized for narrative fiction
-        self.patterns = self._compile_patterns()
-        
-        # Initialize the embedding model with proper device detection
+        # Initialize the embedding model
         self._log(f"Initializing embedding model: {embedding_model}")
         try:
             device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -55,73 +90,18 @@ class SemanticTextSplitter(TextSplitter):
             self._log(f"Error initializing model with device detection: {str(e)}")
             self._log("Falling back to basic model initialization")
             self.embedding_model = SentenceTransformer(embedding_model)
+        
+        # Compile structural patterns - focusing on just key patterns
+        self.chapter_pattern = re.compile(r'^(?:CHAPTER|Chapter)\s+[A-Z0-9]+(?:\s+[A-Z].*)?$', re.MULTILINE)
+        self.scene_break_pattern = re.compile(r'^[\s*#_\-]{3,}$', re.MULTILINE)
     
-    # Compile regex patterns optimized for narrative fiction texts
-    def _compile_patterns(self) -> Dict[str, re.Pattern]:
-        return {
-            # Chapter markers (common in Harry Potter books)
-            'chapter_heading': re.compile(r'^(?:CHAPTER|Chapter)\s+[A-Z0-9]+(?:\s+[A-Z].*)?$', re.MULTILINE),
-            
-            # Scene breaks (common in novels)
-            'scene_break': re.compile(r'^[\s*#_\-]{3,}$', re.MULTILINE),
-            
-            # Dialogue markers
-            'dialogue_start': re.compile(r'^\s*[\'"].*', re.MULTILINE),
-            'dialogue_continuation': re.compile(r'.*[,:][\s]*[\'"]\s*\w+.*$', re.MULTILINE),
-            
-            # Character indicators (common in Harry Potter)
-            'character_indicator': re.compile(r'\b(Harry|Ron|Hermione|Dumbledore|Snape|Hagrid|Voldemort)\b\s*(?:said|asked|replied|shouted|whispered|muttered|exclaimed)', re.IGNORECASE),
-            
-            # Location changes
-            'location_change': re.compile(r'\b(?:meanwhile|elsewhere|later|back at|in the|at the)\b.*', re.IGNORECASE),
-            
-            # Time transitions
-            'time_transition': re.compile(r'\b(?:the next|that|the following|the previous|earlier|later)\s+(?:day|morning|afternoon|evening|night|week|month|year)\b', re.IGNORECASE),
-            
-            # PDF page breaks and headers (for handling scanned books)
-            'page_break': re.compile(r'\f'),
-            'header': re.compile(r'^[^.!?]*(?:[Pp]age|[Cc]hapter)\s*\d+.*\n'),
-            'footer': re.compile(r'\n[^.!?]*(?:[Pp]age|[Cc]hapter)\s*\d+.*$'),
-        }
-    
-    # Log messages if verbose mode is enabled
     def _log(self, message: str) -> None:
+        """Log messages if verbose mode is enabled."""
         if self.verbose:
             print(f"[SemanticTextSplitter] {message}")
     
-    # Check if the text contains a narrative structural boundary
-    def _is_structural_boundary(self, text: str) -> bool:
-        if not self.respect_structure:
-            return False
-            
-        for pattern_name, pattern in self.patterns.items():
-            if pattern.search(text):
-                self._log(f"Found structural boundary: {pattern_name}")
-                return True
-        return False
-    
-    # Check if the text represents a dialogue exchange that should be preserved
-    def _is_dialogue_unit(self, text: str) -> bool:
-        if not self.preserve_dialogue:
-            return False
-        
-        # Count quotation marks - uneven counts suggest continuation
-        quote_count = text.count('"') + text.count("'")
-        if quote_count % 2 != 0:
-            return True
-            
-        # Check for dialogue patterns
-        if self.patterns['dialogue_start'].search(text) and self.patterns['dialogue_continuation'].search(text):
-            return True
-            
-        # Check for character speech indicators
-        if self.patterns['character_indicator'].search(text):
-            return True
-            
-        return False
-
-    # Calculate cosine similarity between two embeddings    
     def _calculate_similarity(self, embedding1: np.ndarray, embedding2: np.ndarray) -> float:
+        """Calculate cosine similarity between two embeddings."""
         # Handle zero vectors
         if np.all(embedding1 == 0) or np.all(embedding2 == 0):
             return 0.0
@@ -133,10 +113,10 @@ class SemanticTextSplitter(TextSplitter):
             self._log(f"Error calculating similarity: {str(e)}")
             return 0.0
     
-    # Check if two text segments are semantically similar in narrative context
     def _is_semantically_similar(self, text1: str, text2: str) -> bool:
+        """Check if two text segments are semantically similar."""
         # For very short texts, consider them similar to avoid over-chunking
-        if len(text1) < 70 or len(text2) < 70:
+        if len(text1) < 50 or len(text2) < 50:
             return True
         
         try:
@@ -153,209 +133,152 @@ class SemanticTextSplitter(TextSplitter):
             self._log(f"Error in semantic similarity check: {str(e)}")
             return True
     
-    # Segment narrative text into chunks based on narrative structure and semantic cohesion
-    def _segment_narrative_text(self, text: str) -> List[str]:
-        if not text.strip():
+    def split_text(self, text: str) -> List[str]:
+        """
+        Split text into chunks while respecting sentence boundaries.
+        """
+        if not text or not text.strip():
             return []
         
-        # Split text by paragraphs first
-        paragraphs = text.split(self.paragraph_separator)
+        # Normalize line breaks and whitespace
+        text = re.sub(r'\r\n', '\n', text)
+        text = re.sub(r'\n{3,}', '\n\n', text)
         
-        # Keep track of original paragraph content
-        original_paragraphs = [p for p in paragraphs]
+        # Extract sentences from the text - use our custom implementation
+        try:
+            # Force the use of punkt rather than punkt_tab by direct call to the punkt
+            # tokenizer rather than through sent_tokenize which might try to use punkt_tab
+            try:
+                from nltk.tokenize import PunktSentenceTokenizer
+                tokenizer = PunktSentenceTokenizer()
+                sentences = tokenizer.tokenize(text)
+                self._log(f"NLTK PunktSentenceTokenizer used directly - {len(sentences)} sentences")
+            except Exception as direct_e:
+                self._log(f"Direct PunktSentenceTokenizer failed: {str(direct_e)}. Trying sent_tokenize...")
+                sentences = nltk.sent_tokenize(text)
+                self._log(f"NLTK sent_tokenize used - {len(sentences)} sentences")
+        except Exception as e:
+            self._log(f"NLTK tokenization failed: {str(e)}. Using fallback.")
+            sentences = basic_sentence_split(text)
+            self._log(f"Fallback tokenized text into {len(sentences)} sentences")
         
-        # Filter out empty paragraphs for processing
-        paragraphs = [p.strip() for p in paragraphs if p.strip()]
+        # Handle the case of no sentences or single massive sentence
+        if not sentences:
+            return []
         
-        if not paragraphs:
-            return [text] if text.strip() else []
+        # If we only got one very long sentence, try to break it up further
+        if len(sentences) == 1 and len(sentences[0]) > self.max_chunk_size * 2:
+            self._log("Single long sentence detected - trying alternative splitting")
+            sentences = basic_sentence_split(text)
+            self._log(f"Alternative splitting produced {len(sentences)} sentences")
         
-        # Process paragraphs with narrative structure awareness
+        # Process sentences into semantically coherent chunks
+        return self._group_sentences_semantically(sentences)
+    
+    def _group_sentences_semantically(self, sentences: List[str]) -> List[str]:
+        """Group sentences into semantically coherent chunks while respecting size limits."""
+        if not sentences:
+            return []
+        
         chunks = []
-        current_chunk = ""
-        dialogue_context = ""  # Track ongoing dialogue
-        chapter_start = False  # Track if we're at the start of a chapter
+        current_chunk = sentences[0]
+        current_sentences = [sentences[0]]
         
-        for i, para in enumerate(paragraphs):
-            # Check if this paragraph starts a new chapter
-            if self.patterns['chapter_heading'].search(para):
-                # Always start a new chunk for chapters
-                if current_chunk:
-                    chunks.append(current_chunk)
-                current_chunk = para
-                chapter_start = True
-                dialogue_context = ""
-                continue
-                
-            # Check if this is a scene break
-            if self.patterns['scene_break'].search(para):
-                # End the current chunk and start a new one
-                if current_chunk:
-                    chunks.append(current_chunk)
-                current_chunk = para
-                dialogue_context = ""
-                continue
-            
-            # Check for ongoing dialogue
-            is_dialogue = self._is_dialogue_unit(para)
-            
-            # Special handling for dialogue
-            if is_dialogue:
-                # If we have ongoing dialogue, check if this continues it
-                if dialogue_context and self._is_semantically_similar(dialogue_context, para):
-                    # Continue the dialogue in current chunk if it fits
-                    if len(current_chunk) + len(para) + len(self.paragraph_separator) <= self.max_chunk_size:
-                        if current_chunk:
-                            current_chunk += self.paragraph_separator + para
-                        else:
-                            current_chunk = para
-                        dialogue_context += " " + para
-                        continue
-                
-                # Start tracking a new dialogue exchange
-                dialogue_context = para
-            
-            # Regular paragraph handling with enhanced narrative continuity
-            
-            # Check size constraints
-            if len(current_chunk) + len(para) + len(self.paragraph_separator) > self.max_chunk_size:
-                # Current chunk would be too large - save it and start a new one
-                if current_chunk:
-                    chunks.append(current_chunk)
-                    current_chunk = ""
-            
-            # Check semantic similarity for narrative continuity
-            if current_chunk and not chapter_start and not self._is_semantically_similar(current_chunk, para):
+        for i in range(1, len(sentences)):
+            # Check if adding this sentence would exceed size limit
+            if len(current_chunk) + len(sentences[i]) + 1 > self.max_chunk_size:
                 chunks.append(current_chunk)
-                current_chunk = ""
-                dialogue_context = ""
-            
-            # Add the paragraph to the current chunk
-            if current_chunk:
-                current_chunk += self.paragraph_separator + para
+                current_chunk = sentences[i]
+                current_sentences = [sentences[i]]
             else:
-                current_chunk = para
-                
-            # Reset chapter_start flag
-            chapter_start = False
+                # Check semantic similarity 
+                if len(current_chunk) > 100:
+                    if self._is_semantically_similar(current_chunk, sentences[i]):
+                        current_chunk += " " + sentences[i]
+                        current_sentences.append(sentences[i])
+                    else:
+                        # If not similar, check if current chunk is large enough
+                        if len(current_chunk) >= self.min_chunk_size:
+                            chunks.append(current_chunk)
+                            current_chunk = sentences[i]
+                            current_sentences = [sentences[i]]
+                        else:
+                            # If too small, add anyway to avoid tiny chunks
+                            current_chunk += " " + sentences[i]
+                            current_sentences.append(sentences[i])
+                else:
+                    # Just add it for short chunks
+                    current_chunk += " " + sentences[i]
+                    current_sentences.append(sentences[i])
         
-        # Add the final chunk if it's not empty
+        # Add the last chunk
         if current_chunk:
             chunks.append(current_chunk)
         
-        # If we have no chunks (unlikely), return the original text
-        if not chunks:
-            self._log("Warning: No chunks created during narrative-based splitting")
-            return [text]
+        # Handle structural boundaries if needed
+        if self.respect_structure:
+            chunks = self._respect_structural_boundaries(chunks)
         
-        # Ensure chunks meet minimum size by merging small chunks
-        merged_chunks = self._merge_small_chunks(chunks)
-        
-        # Verify content preservation
-        original_content = ''.join(original_paragraphs).strip()
-        merged_content = ''.join(merged_chunks).strip()
-        
-        # If we lost significant content, fall back to the pre-merged chunks
-        if len(merged_content) < len(original_content) * 0.9:
-            self._log(f"Warning: Content loss detected during narrative chunking")
-            if len(''.join(chunks).strip()) >= len(original_content) * 0.9:
-                return chunks
-            else:
-                # Ultimate fallback if even pre-merged chunks lost content
-                return [text]
-        
-        return merged_chunks
+        # Merge small chunks if needed
+        return self._merge_small_chunks(chunks)
     
-    # Merge small chunks to ensure all chunks meet minimum size requirements
-    def _merge_small_chunks(self, chunks: List[str]) -> List[str]:
+    def _respect_structural_boundaries(self, chunks: List[str]) -> List[str]:
+        """Adjust chunks to respect structural boundaries like chapters."""
         if not chunks:
             return []
+        
+        result = []
+        current = chunks[0]
+        
+        for i in range(1, len(chunks)):
+            # If this chunk starts with a chapter heading, start a new chunk
+            if self.chapter_pattern.search(chunks[i].strip().split("\n")[0]):
+                result.append(current)
+                current = chunks[i]
+            # If this chunk starts with a scene break, start a new chunk
+            elif self.scene_break_pattern.search(chunks[i].strip().split("\n")[0]):
+                result.append(current)
+                current = chunks[i]
+            else:
+                # Check if adding would exceed size
+                if len(current) + len(chunks[i]) + 2 <= self.max_chunk_size:
+                    current += " " + chunks[i]
+                else:
+                    result.append(current)
+                    current = chunks[i]
+        
+        # Add the last chunk
+        if current:
+            result.append(current)
             
-        # If we only have one chunk, just return it regardless of size
-        if len(chunks) == 1:
+        return result
+    
+    def _merge_small_chunks(self, chunks: List[str]) -> List[str]:
+        """Merge small chunks where possible to avoid tiny fragments."""
+        if len(chunks) <= 1:
             return chunks
             
-        final_chunks = []
-        small_chunk = ""
+        result = []
+        current = chunks[0]
         
-        for chunk in chunks:
-            # Skip truly empty chunks (after stripping)
-            if not chunk.strip():
-                continue
-                
-            # If this chunk is small, add it to our buffer of small chunks
-            if len(chunk) < self.min_chunk_size:
-                small_chunk += (self.paragraph_separator + chunk) if small_chunk else chunk
-                
-                # If we've accumulated enough small chunks, add them as one chunk
-                if len(small_chunk) >= self.min_chunk_size:
-                    final_chunks.append(small_chunk)
-                    small_chunk = ""
+        for i in range(1, len(chunks)):
+            # If current chunk is too small and can be merged with next
+            if len(current) < self.min_chunk_size and len(current) + len(chunks[i]) + 1 <= self.max_chunk_size:
+                current += " " + chunks[i]
             else:
-                # This is a normal-sized chunk
-                final_chunks.append(chunk)
-        
-        # Handle any remaining small chunks - never discard them
-        if small_chunk:
-            if final_chunks:
-                # Try to merge with the last chunk if it won't make it too large
-                if len(final_chunks[-1]) + len(small_chunk) + len(self.paragraph_separator) <= self.max_chunk_size:
-                    final_chunks[-1] += self.paragraph_separator + small_chunk
-                else:
-                    # If it would make the last chunk too large, keep it separate
-                    final_chunks.append(small_chunk)
-            else:
-                # If there are no other chunks, keep this one even if it's small
-                final_chunks.append(small_chunk)
+                result.append(current)
+                current = chunks[i]
                 
-        return final_chunks
+        # Add the last chunk
+        if current:
+            result.append(current)
+            
+        return result
     
-    # Split text into narrative-aware chunks optimized for fiction like Harry Potter
-    def split_text(self, text: str) -> List[str]:
-        if not text:
-            return []
-            
-        original_text = text.strip()
-        if not original_text:
-            return []
-            
-        # Try narrative chunking optimized for fiction
-        try:
-            chunks = self._segment_narrative_text(text)
-            if self._verify_content_preservation(original_text, chunks):
-                return chunks
-            else:
-                self._log("Content preservation check failed for narrative splitting")
-        except Exception as e:
-            self._log(f"Narrative chunking failed: {str(e)}")
-        
-        # Ultimate fallback: just return the original text as a single chunk
-        self._log("Using emergency fallback: returning text as a single chunk")
-        return [original_text]
-
-    # Verify that the content of the original text is preserved in the chunks    
-    def _verify_content_preservation(self, original_text: str, chunks: List[str]) -> bool:
-        if not chunks:
-            return False
-            
-        # Remove excess whitespace for comparison
-        original_normalized = re.sub(r'\s+', ' ', original_text).strip()
-        
-        # Join chunks with a separator for comparison
-        chunks_normalized = ' '.join([re.sub(r'\s+', ' ', chunk).strip() for chunk in chunks])
-        
-        # Calculate content preservation ratio (should be close to 1.0)
-        original_length = len(original_normalized)
-        chunks_length = len(chunks_normalized)
-        ratio = chunks_length / original_length if original_length > 0 else 0
-        
-        # We consider it successful if we preserved at least 90% of the content
-        return ratio >= 0.9
-
-    # Create langchain Documents from a list of texts with enhanced metadata for narrative context    
     def create_documents(
         self, texts: List[str], metadatas: Optional[List[dict]] = None
     ) -> List[Document]:
+        """Create documents from texts with metadata."""
         documents = []
         
         for i, text in enumerate(texts):
@@ -367,33 +290,22 @@ class SemanticTextSplitter(TextSplitter):
                 doc_metadata["chunk"] = j
                 doc_metadata["total_chunks"] = len(chunks)
                 
-                # Add narrative structure info to metadata
+                # Add basic structure detection
                 if self.respect_structure:
-                    # Detect chapter headings
-                    if self.patterns['chapter_heading'].search(chunk):
-                        chapter_match = self.patterns['chapter_heading'].search(chunk)
-                        doc_metadata["is_chapter_start"] = True
-                        doc_metadata["chapter_heading"] = chapter_match.group(0) if chapter_match else "Unknown Chapter"
+                    # Detect if chunk contains chapter heading
+                    if self.chapter_pattern.search(chunk):
+                        doc_metadata["contains_chapter_heading"] = True
                     
-                    # Detect scene transitions
-                    if self.patterns['scene_break'].search(chunk):
+                    # Detect if chunk contains scene break
+                    if self.scene_break_pattern.search(chunk):
                         doc_metadata["contains_scene_break"] = True
-                    
-                    # Detect if chunk contains dialogue
-                    if '"' in chunk or "'" in chunk:
-                        doc_metadata["contains_dialogue"] = True
-                    
-                    # Check for character mentions
-                    character_matches = re.findall(r'\b(Harry|Ron|Hermione|Dumbledore|Snape|Hagrid|Voldemort)\b', chunk, re.IGNORECASE)
-                    if character_matches:
-                        doc_metadata["characters_mentioned"] = list(set([match.title() for match in character_matches]))
                 
                 documents.append(Document(page_content=chunk, metadata=doc_metadata))
         
         return documents
-
-    # Split a list of documents into narrative-aware chunks with enhanced metadata    
+    
     def split_documents(self, documents: List[Document]) -> List[Document]:
+        """Split documents into chunks."""
         texts = [doc.page_content for doc in documents]
         metadatas = [doc.metadata for doc in documents]
         
