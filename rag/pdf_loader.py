@@ -42,20 +42,32 @@ class PDFLoader:
                 # Sort blocks by vertical position (top to bottom)
                 sorted_blocks = sorted(blocks, key=lambda b: b[1])
                 
-                # Extract text and filter out empty blocks and headers
+                # Extract text and filter out empty blocks and headers/footers
                 text_blocks = []
                 
+                # Get page dimensions to identify header/footer areas
+                page_height = page.rect.height
+                header_zone = page_height * 0.1  # Top 10% of page is considered header
+                footer_zone = page_height * 0.9  # Bottom 10% of page is considered footer
+                
                 for block in sorted_blocks:
-                    text = block[4].strip()
+                    # Block format is (x0, y0, x1, y1, text, block_no, block_type)
+                    x0, y0, x1, y1, text = block[:5]
+                    text = text.strip()
+                    
                     if not text:
                         continue
                         
-                    # Skip page numbers
+                    # Skip blocks in header/footer zones that contain page numbers or book titles
+                    if (y0 < header_zone or y1 > footer_zone):
+                        # Check if it's likely a header/footer
+                        if (self.patterns['page_number'].match(text) or 
+                            self.patterns['book_title'].match(text) or
+                            len(text) < 20):  # Short text in header/footer zones is likely metadata
+                            continue
+                    
+                    # Skip standalone page numbers anywhere on the page
                     if self.patterns['page_number'].match(text):
-                        continue
-                        
-                    # Skip "HARRY POTTER" headers
-                    if self.patterns['book_title'].match(text):
                         continue
                         
                     # Skip chapter headers but store them as metadata
@@ -89,7 +101,7 @@ class PDFLoader:
                 return self._clean_headers_and_footers(page.get_text())
             except:
                 return ""
-    
+            
     # Clean headers and footers from the text
     def _clean_headers_and_footers(self, text):
         """Clean page headers, numbers and footers from the text."""
