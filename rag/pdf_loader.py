@@ -104,7 +104,6 @@ class PDFLoader:
             
     # Clean headers and footers from the text
     def _clean_headers_and_footers(self, text):
-        """Clean page headers, numbers and footers from the text."""
         if not text:
             return ""
             

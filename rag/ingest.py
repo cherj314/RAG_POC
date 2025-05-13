@@ -1,7 +1,5 @@
 import os, sys, time, glob, re, concurrent.futures, traceback
-from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.docstore.document import Document
-from langchain_community.document_loaders import TextLoader
 from langchain_community.vectorstores.pgvector import PGVector
 from langchain_huggingface import HuggingFaceEmbeddings
 from sqlalchemy import create_engine, text
@@ -42,8 +40,8 @@ MAX_WORKERS = int(os.getenv("MAX_WORKERS"))
 # Database connection string
 CONNECTION_STRING = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
+# Clean up text content to remove headers, footers and page numbers
 def preprocess_text(text):
-    """Clean up text content to remove headers, footers and page numbers."""
     lines = text.split('\n')
     cleaned_lines = []
     
@@ -253,7 +251,7 @@ def setup_database():
     
     print(f"✅ Database setup completed in {time.time() - start_time:.2f}s")
 
-# Create a semantic text splitter 
+# Create a semantic text splitter or fall back to recursive character splitter
 def create_text_splitter(file_extension=""):
     try:
         print(f"  - Using semantic chunking (similarity threshold: {SEMANTIC_SIMILARITY})")
@@ -294,48 +292,6 @@ def find_documents():
     print(f"  - Found {len(txt_files)} text files and {len(pdf_files)} PDF files")
     
     return doc_files
-
-# Function to ensure complete sentences in chunks
-def ensure_complete_sentences(chunks):
-    """Ensure chunks start and end with complete sentences."""
-    if not chunks:
-        return chunks
-    
-    processed_chunks = []
-    
-    for i, chunk in enumerate(chunks):
-        content = chunk.page_content
-        
-        # Check if chunk starts with lowercase letter (likely mid-sentence)
-        if content and content[0].islower() and i > 0 and processed_chunks:
-            # Find the last sentence of the previous chunk
-            prev_content = processed_chunks[-1].page_content
-            sentences = re.split(r'(?<=[.!?])\s+', prev_content)
-            
-            if sentences and not prev_content.endswith(('.', '!', '?', '."', '!"', '?"')):
-                # Take the incomplete sentence from previous chunk
-                incomplete_sent = sentences[-1]
-                
-                # Find where to split the current chunk
-                current_sentences = re.split(r'(?<=[.!?])\s+', content)
-                if current_sentences:
-                    # Complete the sentence
-                    completed_sent = incomplete_sent + " " + current_sentences[0]
-                    
-                    # Update previous chunk without the incomplete sentence
-                    processed_chunks[-1].page_content = " ".join(sentences[:-1])
-                    
-                    # Update current chunk with the completed sentence
-                    chunk.page_content = completed_sent + " " + " ".join(current_sentences[1:])
-        
-        # Check if chunk ends without sentence-ending punctuation
-        if content and not re.search(r'[.!?]"\s*$', content) and not re.search(r'[.!?]\s*$', content) and i < len(chunks) - 1:
-            # This chunk ends mid-sentence, but we'll handle it in the next iteration
-            pass
-            
-        processed_chunks.append(chunk)
-    
-    return processed_chunks
 
 # Update the process_document function in ingest.py
 def process_document(file_path):
@@ -450,10 +406,7 @@ def process_document(file_path):
         # Split document into chunks
         try:
             chunks = text_splitter.split_documents(document)
-            
-            # Apply post-processing to ensure complete sentences and remove any leftover headers
-            chunks = ensure_complete_sentences(chunks)
-            
+
             # Additional filter to remove any chunks that are just headers, page numbers, etc.
             # (very short chunks, or chunks that match our header patterns)
             filtered_chunks = []

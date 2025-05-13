@@ -31,32 +31,8 @@ except Exception as e:
     print(f"Warning: Error setting up NLTK: {str(e)}")
     print("Proceeding with fallback sentence splitting.")
 
-# Define a robust sentence splitter as fallback
-def basic_sentence_split(text):
-    """Split text into sentences using basic regex patterns that mimic NLTK's behavior."""
-    # Clean up the text first
-    text = re.sub(r'\s+', ' ', text)
-    
-    # Split by common sentence ending punctuation followed by a space and capital letter
-    pattern = r'(?<=[.!?])\s+(?=[A-Z])'
-    sentences = re.split(pattern, text)
-    
-    # Further split by common sentence ending marks
-    final_sentences = []
-    for sentence in sentences:
-        # Split by line breaks that might indicate sentence breaks
-        parts = re.split(r'\n{2,}', sentence)
-        for part in parts:
-            if part.strip():
-                final_sentences.append(part.strip())
-    
-    return final_sentences if final_sentences else [text]
-
+# A text splitter that creates chunks based on semantic similarity while ensuring chunks respect sentence boundaries.  
 class SemanticTextSplitter(TextSplitter):
-    """
-    A text splitter that creates chunks based on semantic similarity
-    while ensuring chunks respect sentence boundaries.
-    """
     
     def __init__(
         self,
@@ -97,13 +73,13 @@ class SemanticTextSplitter(TextSplitter):
         self.page_number_pattern = re.compile(r'^\d+$', re.MULTILINE)
         self.book_title_pattern = re.compile(r'^HARRY POTTER.*$', re.MULTILINE)
     
+
     def _log(self, message: str) -> None:
-        """Log messages if verbose mode is enabled."""
         if self.verbose:
             print(f"[SemanticTextSplitter] {message}")
     
+    # Calculate cosine similarity between two embeddings
     def _calculate_similarity(self, embedding1: np.ndarray, embedding2: np.ndarray) -> float:
-        """Calculate cosine similarity between two embeddings."""
         # Handle zero vectors
         if np.all(embedding1 == 0) or np.all(embedding2 == 0):
             return 0.0
@@ -115,8 +91,8 @@ class SemanticTextSplitter(TextSplitter):
             self._log(f"Error calculating similarity: {str(e)}")
             return 0.0
     
+    # Check if two text segments are semantically similar
     def _is_semantically_similar(self, text1: str, text2: str) -> bool:
-        """Check if two text segments are semantically similar."""
         # For very short texts, consider them similar to avoid over-chunking
         if len(text1) < 50 or len(text2) < 50:
             return True
@@ -134,8 +110,8 @@ class SemanticTextSplitter(TextSplitter):
             self._log(f"Error in semantic similarity check: {str(e)}")
             return True
     
+    # Split text into chunks while respecting sentence boundaries
     def split_text(self, text: str) -> List[str]:
-        """Split text into chunks while respecting sentence boundaries."""
         if not text or not text.strip():
             return []
         
@@ -194,9 +170,9 @@ class SemanticTextSplitter(TextSplitter):
         chunks = self._ensure_complete_sentences(chunks)
         
         return chunks
-  
+    
+    # Group sentences into semantically coherent chunks
     def _group_sentences_semantically(self, sentences: List[str]) -> List[str]:
-        """Group sentences into semantically coherent chunks while respecting sentence boundaries."""
         if not sentences:
             return []
         
@@ -228,8 +204,8 @@ class SemanticTextSplitter(TextSplitter):
         # Merge small chunks if needed
         return self._merge_small_chunks(chunks)
     
+    # Ensure chunks start and end with complete sentences
     def _respect_structural_boundaries(self, chunks: List[str]) -> List[str]:
-        """Adjust chunks to respect structural boundaries like chapters."""
         if not chunks:
             return []
         
@@ -259,6 +235,7 @@ class SemanticTextSplitter(TextSplitter):
             
         return result
     
+    # Merge small chunks to avoid tiny fragments
     def _merge_small_chunks(self, chunks: List[str]) -> List[str]:
         """Merge small chunks where possible to avoid tiny fragments."""
         if len(chunks) <= 1:
@@ -281,8 +258,8 @@ class SemanticTextSplitter(TextSplitter):
             
         return result
     
+    # Ensure chunks start and end with complete sentences
     def _ensure_complete_sentences(self, chunks: List[str]) -> List[str]:
-        """Fix chunks to ensure they start and end with complete sentences."""
         if not chunks:
             return []
 
@@ -319,10 +296,10 @@ class SemanticTextSplitter(TextSplitter):
     
         return result
     
+    # Create documents from text and metadata
     def create_documents(
         self, texts: List[str], metadatas: Optional[List[dict]] = None
     ) -> List[Document]:
-        """Create documents from texts with metadata."""
         documents = []
         
         for i, text in enumerate(texts):
@@ -348,8 +325,8 @@ class SemanticTextSplitter(TextSplitter):
         
         return documents
     
+    # Split documents into chunks
     def split_documents(self, documents: List[Document]) -> List[Document]:
-        """Split documents into chunks."""
         texts = [doc.page_content for doc in documents]
         metadatas = [doc.metadata for doc in documents]
         
