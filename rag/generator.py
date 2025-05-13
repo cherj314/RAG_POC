@@ -19,56 +19,44 @@ def generate_response(
     if model_type is None:
         model_type = os.getenv("DEFAULT_MODEL_TYPE", "openai").lower()
     
-    # Call appropriate generation function based on model type
-    if model_type == "openai":
-        return generate_with_openai(prompt, max_tokens, model, temperature, preserve_formatting)
-    elif model_type == "ollama":
-        return generate_with_ollama(prompt, max_tokens, model, temperature, preserve_formatting)
-    else:
-        raise ValueError(f"Unsupported model type: {model_type}")
-
-# Generate a response using OpenAI's models
-def generate_with_openai(
-    prompt, 
-    max_tokens=2048, 
-    model=None, 
-    temperature=0.3, 
-    preserve_formatting=True
-):
-    if model is None:
-        model = os.getenv("OPENAI_MODEL", "gpt-4o")
-    
     max_retries = 3
     backoff_factor = 1.5
     
+    # Select the appropriate model if not provided
+    if model is None:
+        if model_type == "openai":
+            model = os.getenv("OPENAI_MODEL", "gpt-4o")
+        elif model_type == "ollama":
+            model = os.getenv("OLLAMA_MODEL", "tinyllama")
+    
+    # Prepare system message for Harry Potter context
+    system_message = "You are an expert on Harry Potter books with comprehensive knowledge of the series."
+    
     for retry in range(max_retries):
         try:
-            response = openai.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": "You are an expert on Harry Potter books with comprehensive knowledge of the series."},
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=max_tokens,
-                temperature=temperature,
-            )
-            
-            raw_content = response.choices[0].message.content.strip()
+            # Call the appropriate model service
+            if model_type == "openai":
+                response_content = _call_openai_api(prompt, system_message, model, max_tokens, temperature)
+            elif model_type == "ollama":
+                response_content = _call_ollama_api(prompt, system_message, model, max_tokens, temperature)
+            else:
+                raise ValueError(f"Unsupported model type: {model_type}")
             
             # If we need to preserve formatting
             if preserve_formatting:
-                return format_response(raw_content)
+                return format_response(response_content)
             else:
-                return raw_content
+                return response_content
             
-        except openai.RateLimitError:
-            # Handle rate limiting with exponential backoff
+        except (openai.RateLimitError, requests.exceptions.RequestException) as e:
+            # Handle rate limiting or network errors with exponential backoff
             if retry < max_retries - 1:
                 sleep_time = backoff_factor ** retry
-                print(f"Rate limit reached. Retrying in {sleep_time:.1f}s... ({retry+1}/{max_retries})")
+                print(f"Request failed. Retrying in {sleep_time:.1f}s... ({retry+1}/{max_retries})")
                 time.sleep(sleep_time)
             else:
-                return "Error: Rate limit exceeded. Please try your query again in a moment."
+                error_type = "Rate limit exceeded" if isinstance(e, openai.RateLimitError) else "Connection error"
+                return f"Error: {error_type}. Please try your query again in a moment."
                 
         except openai.APITimeoutError:
             # Handle timeout
@@ -81,49 +69,45 @@ def generate_with_openai(
                 
         except Exception as e:
             # Log detailed error
-            print(f"Error generating response with OpenAI (attempt {retry+1}/{max_retries}): {str(e)}")
+            print(f"Error generating response (attempt {retry+1}/{max_retries}): {str(e)}")
             
-            # For critical errors, retry with simpler prompt
+            # For critical errors, retry with simpler prompt on the last attempt
             if retry == max_retries - 1:
                 try:
                     # Try one last time with a simpler prompt
                     simplified_prompt = "Answer the following Harry Potter question as concisely as possible:\n\n" + prompt.split("QUESTION:")[-1]
+                    simplified_system = "You are a Harry Potter expert. Keep your response brief and direct."
                     
-                    response = openai.chat.completions.create(
-                        model=model,
-                        messages=[
-                            {"role": "system", "content": "You are a Harry Potter expert. Keep your response brief and direct."},
-                            {"role": "user", "content": simplified_prompt}
-                        ],
-                        max_tokens=max_tokens // 2,  # Reduce tokens for fallback
-                        temperature=0.2,  # Lower temperature for more reliable response
-                    )
-                    
-                    return response.choices[0].message.content.strip()
+                    if model_type == "openai":
+                        return _call_openai_api(simplified_prompt, simplified_system, model, max_tokens // 2, 0.2)
+                    elif model_type == "ollama":
+                        return _call_ollama_api(simplified_prompt, simplified_system, model, max_tokens // 2, 0.2)
                 except:
                     return f"Error generating response. Please try rephrasing your question."
     
     # If we've exhausted all retries
     return "Error generating response after multiple attempts. Please try again later."
 
-# Generate a response using Ollama's models
-def generate_with_ollama(
-    prompt, 
-    max_tokens=2048, 
-    model=None, 
-    temperature=0.3, 
-    preserve_formatting=True
-):
-    if model is None:
-        model = os.getenv("OLLAMA_MODEL", "tinyllama")
+# Call OpenAI API
+def _call_openai_api(prompt, system_message, model, max_tokens, temperature):
+    response = openai.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system_message},
+            {"role": "user", "content": prompt}
+        ],
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
     
-    max_retries = 3
-    backoff_factor = 1.5
-    
+    return response.choices[0].message.content.strip()
+
+# Call Ollama API
+def _call_ollama_api(prompt, system_message, model, max_tokens, temperature):
     # Format the request for Ollama API
     # Create system and user messages
     messages = [
-        {"role": "system", "content": "You are an expert on Harry Potter books with comprehensive knowledge of the series."},
+        {"role": "system", "content": system_message},
         {"role": "user", "content": prompt}
     ]
     
@@ -139,68 +123,12 @@ def generate_with_ollama(
         }
     }
     
-    for retry in range(max_retries):
-        try:
-            response = requests.post(url, json=payload)
-            response.raise_for_status()
-            
-            # Extract the response content
-            result = response.json()
-            raw_content = result.get("message", {}).get("content", "")
-            
-            # Format if needed
-            if preserve_formatting:
-                return format_response(raw_content)
-            else:
-                return raw_content
-                
-        except requests.exceptions.RequestException as e:
-            # Handle network errors
-            if retry < max_retries - 1:
-                sleep_time = backoff_factor ** retry
-                print(f"Ollama request failed. Retrying in {sleep_time:.1f}s... ({retry+1}/{max_retries})")
-                time.sleep(sleep_time)
-            else:
-                print(f"Error connecting to Ollama: {str(e)}")
-                return "Error: Could not connect to Ollama service. Please check if the service is running."
-                
-        except Exception as e:
-            # Handle other errors
-            print(f"Error generating response with Ollama (attempt {retry+1}/{max_retries}): {str(e)}")
-            
-            if retry < max_retries - 1:
-                sleep_time = backoff_factor ** retry
-                time.sleep(sleep_time)
-            else:
-                # Final attempt with simplified prompt
-                try:
-                    # Simplify the prompt for the last attempt
-                    simplified_prompt = "Answer this Harry Potter question briefly: " + prompt.split("QUESTION:")[-1]
-                    
-                    simple_payload = {
-                        "model": model,
-                        "messages": [
-                            {"role": "system", "content": "You are a Harry Potter expert. Keep answers brief."},
-                            {"role": "user", "content": simplified_prompt}
-                        ],
-                        "stream": False,
-                        "options": {
-                            "temperature": 0.2,
-                            "num_predict": max_tokens // 2
-                        }
-                    }
-                    
-                    response = requests.post(url, json=simple_payload)
-                    response.raise_for_status()
-                    
-                    result = response.json()
-                    return result.get("message", {}).get("content", "")
-                    
-                except:
-                    return "Error generating response with Ollama. Please try again later."
+    response = requests.post(url, json=payload)
+    response.raise_for_status()
     
-    # If we've exhausted all retries
-    return "Error generating response after multiple attempts. Please try again later."
+    # Extract the response content
+    result = response.json()
+    return result.get("message", {}).get("content", "")
 
 # Format the response to ensure readability and proper formatting
 def format_response(raw_content):
