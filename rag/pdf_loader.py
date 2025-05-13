@@ -1,12 +1,9 @@
 import os
-import time
 import re
-import fitz # type: ignore
-import concurrent.futures
+import fitz   # type: ignore
 from typing import List, Dict, Any, Optional
 from langchain.docstore.document import Document
 
-# Optimized PDF loader using PyMuPDF with parallel processing and memory optimization
 class PDFLoader:
     def __init__(self, file_path: str, encoding: str = "utf-8", verbose: bool = False, 
                  max_workers: int = 4, batch_size: int = 10, extract_images: bool = False):
@@ -18,137 +15,138 @@ class PDFLoader:
         self.extract_images = extract_images
         self._current_chapter = None
         
-        # Essential patterns for structure detection - minimized for performance
+        # Patterns for detecting elements to exclude
         self.patterns = {
-            'chapter_heading': re.compile(r'^(?:CHAPTER|Chapter)\s+[A-Z0-9]+(?:\s+[A-Z].*)?$', re.MULTILINE),
-            'header_footer': re.compile(r'^\s*(?:\d+|Page \d+|[A-Za-z\s]+ \d+)\s*$'),
-            'page_number': re.compile(r'^\d+$'),
-            'book_title': re.compile(r'^HARRY POTTER.*$')
+            # Match various forms of Harry Potter style chapter headings
+            'chapter_heading': re.compile(r'(?:—\s*)?CHAPTER\s+(?:[A-Z]+|\d+)(?:\s+[A-Z]+)?(?:\s*—)?', re.IGNORECASE),
+            'page_number': re.compile(r'^\s*\d+\s*$'),
         }
     
     def _log(self, message: str) -> None:
+        """Print log messages if verbose mode is enabled."""
         if self.verbose:
             print(f"[PDFLoader] {message}")
     
-    # Extract text from a PDF page using the most efficient method
-    def _extract_text_efficiently(self, page: fitz.Page) -> str:
-        try:
-            # Use the most performant flags for PyMuPDF
-            flags = fitz.TEXT_PRESERVE_WHITESPACE | fitz.TEXT_PRESERVE_LIGATURES
-            
-            # First try the blocks method which gives good performance and structure
-            blocks = page.get_text("blocks", flags=flags)
-            if blocks:
-                # Sort blocks by vertical position (top to bottom)
-                sorted_blocks = sorted(blocks, key=lambda b: b[1])
-                
-                # Extract text and filter out empty blocks and headers/footers
-                text_blocks = []
-                
-                # Get page dimensions to identify header/footer areas
-                page_height = page.rect.height
-                header_zone = page_height * 0.1  # Top 10% of page is considered header
-                footer_zone = page_height * 0.9  # Bottom 10% of page is considered footer
-                
-                for block in sorted_blocks:
-                    # Block format is (x0, y0, x1, y1, text, block_no, block_type)
-                    x0, y0, x1, y1, text = block[:5]
-                    text = text.strip()
-                    
-                    if not text:
-                        continue
-                        
-                    # Skip blocks in header/footer zones that contain page numbers or book titles
-                    if (y0 < header_zone or y1 > footer_zone):
-                        # Check if it's likely a header/footer
-                        if (self.patterns['page_number'].match(text) or 
-                            self.patterns['book_title'].match(text) or
-                            len(text) < 20):  # Short text in header/footer zones is likely metadata
-                            continue
-                    
-                    # Skip standalone page numbers anywhere on the page
-                    if self.patterns['page_number'].match(text):
-                        continue
-                        
-                    # Skip chapter headers but store them as metadata
-                    if self.patterns['chapter_heading'].match(text):
-                        self._current_chapter = text
-                        continue
-                        
-                    text_blocks.append(text)
-                
-                if text_blocks:
-                    # Process blocks to handle mid-sentence breaks
-                    for i in range(len(text_blocks) - 1):
-                        if not re.search(r'[.!?:]\s*$', text_blocks[i]) and re.match(r'^\s*[a-z]', text_blocks[i+1]):
-                            # This block likely ends mid-sentence and next block starts with continuation
-                            text_blocks[i] += " " + text_blocks[i+1]
-                            text_blocks[i+1] = ""
-                    
-                    # Filter out any empty blocks and join
-                    text = "\n\n".join([b for b in text_blocks if b.strip()])
-                    return self._clean_text(text)
-            
-            # Fall back to text mode with header cleaning
-            text = page.get_text("text", flags=flags)
-            return self._clean_headers_and_footers(text)
+    def _is_chapter_heading(self, text: str) -> bool:
+        """Check if text is a chapter heading."""
+        text = text.strip()
+        return bool(self.patterns['chapter_heading'].match(text))
+    
+    def _is_header(self, text: str, y_pos: float, page_height: float) -> bool:
+        """Determine if text is a header based on position."""
+        text = text.strip()
         
-        except Exception as e:
-            self._log(f"Error extracting text: {str(e)}")
-            
-            # Ultimate fallback
-            try:
-                return self._clean_headers_and_footers(page.get_text())
-            except:
-                return ""
-            
-    # Clean headers and footers from the text
-    def _clean_headers_and_footers(self, text):
-        if not text:
-            return ""
-            
-        # Split text into lines
-        lines = text.split('\n')
-        cleaned_lines = []
+        # Check position - if very close to top of page (within 6%)
+        if y_pos < page_height * 0.06:
+            return True
         
-        for line in lines:
-            line = line.strip()
-            if not line:
+        return False
+    
+    def _detect_chapter_structure(self, page: fitz.Page) -> List[Dict]:
+        """
+        Analyze a page for chapter headings and titles, returning text blocks with metadata.
+        """
+        blocks = []
+        
+        # Get all blocks with text info
+        text_page = page.get_textpage()
+        dict_page = text_page.extractDICT()
+        
+        # Get page dimensions for header detection
+        page_height = page.rect.height
+        
+        # Calculate average font size for this page (might be useful for other detection)
+        font_sizes = []
+        for block in dict_page.get("blocks", []):
+            for line in block.get("lines", []):
+                for span in line.get("spans", []):
+                    if span.get("size", 0) > 0:
+                        font_sizes.append(span.get("size", 0))
+        
+        avg_font_size = sum(font_sizes) / len(font_sizes) if font_sizes else 12  # default fallback
+        
+        # Process blocks, looking for chapter patterns
+        found_chapter_heading = False
+        waiting_for_title = False
+        
+        for block in dict_page.get("blocks", []):
+            block_text = ""
+            max_font_size = 0
+            
+            for line in block.get("lines", []):
+                for span in line.get("spans", []):
+                    block_text += span.get("text", "")
+                    max_font_size = max(max_font_size, span.get("size", 0))
+            
+            # Skip empty blocks
+            if not block_text.strip():
+                continue
+                
+            y_pos = block.get("bbox", [0, 0, 0, 0])[1]  # y0 coordinate (top of block)
+            
+            # Check if this is a header (based on position)
+            is_header = self._is_header(block_text, y_pos, page_height)
+            
+            # Skip headers
+            if is_header:
+                self._log(f"Skipping header text: {block_text[:30]}...")
+                continue
+                
+            # Check if this is a chapter heading
+            is_heading = self._is_chapter_heading(block_text)
+            
+            # Determine if this is a title (the block right after a chapter heading)
+            is_title = waiting_for_title
+            
+            # Add to our blocks list with metadata
+            blocks.append({
+                "text": block_text.strip(),
+                "font_size": max_font_size,
+                "is_chapter_heading": is_heading,
+                "is_chapter_title": is_title,
+                "bbox": block.get("bbox", [0, 0, 0, 0])
+            })
+            
+            # If this was a chapter heading, mark that we're waiting for the title
+            if is_heading:
+                found_chapter_heading = True
+                waiting_for_title = True
+                self._current_chapter = block_text.strip()
+                self._log(f"Found chapter heading: {block_text.strip()}")
+            
+            # If we were waiting for a title and found one, update the current chapter
+            elif waiting_for_title:
+                self._current_chapter += " — " + block_text.strip()
+                self._log(f"Found chapter title: {block_text.strip()}")
+                waiting_for_title = False  # Reset after finding title
+        
+        return blocks
+    
+    def _extract_text_with_chapter_detection(self, page: fitz.Page) -> str:
+        """Extract text from a page while detecting and removing chapter headings and titles."""
+        # Analyze the page for structure - this already filters out headers based on position
+        blocks = self._detect_chapter_structure(page)
+        
+        # Filter out chapter headings and titles
+        content_blocks = []
+        
+        for block in blocks:
+            # Skip chapter headings and titles
+            if block["is_chapter_heading"] or block["is_chapter_title"]:
                 continue
                 
             # Skip page numbers
-            if self.patterns['page_number'].match(line):
+            if self.patterns['page_number'].match(block["text"]):
                 continue
                 
-            # Skip "HARRY POTTER" headers
-            if self.patterns['book_title'].match(line):
-                continue
-                
-            # Skip chapter titles (store in metadata but don't include in text)
-            if self.patterns['chapter_heading'].match(line):
-                self._current_chapter = line
-                continue
-                
-            # Add the clean line
-            cleaned_lines.append(line)
+            # Add content blocks
+            content_blocks.append(block["text"])
         
-        # Join the clean lines and normalize whitespace
-        clean_text = '\n'.join(cleaned_lines)
-        clean_text = re.sub(r'\n{3,}', '\n\n', clean_text)  # Normalize multiple line breaks
-        return clean_text.strip()
+        # Join all content blocks
+        return "\n\n".join(content_blocks)
     
-    # Clean and normalize extracted text
-    def _clean_text(self, text: str) -> str:
-        if not text:
-            return ""
-        
-        # Minimal text cleaning for performance
-        text = re.sub(r' {2,}', ' ', text)
-        text = re.sub(r'\n{3,}', '\n\n', text)
-        return text.strip()
-    
-    # Extract basic metadata from the PDF page
-    def _extract_basic_metadata(self, doc: fitz.Document, page_idx: int, page: fitz.Page) -> Dict[str, Any]:
+    def _extract_basic_metadata(self, doc: fitz.Document, page_idx: int) -> Dict[str, Any]:
+        """Extract basic metadata about the page and current chapter."""
         metadata = {
             "page_number": page_idx + 1,
             "total_pages": len(doc),
@@ -158,126 +156,60 @@ class PDFLoader:
         if self._current_chapter:
             metadata["current_chapter"] = self._current_chapter
         
-        # Only extract font and image info if explicitly requested
-        if self.extract_images:
-            try:
-                image_list = page.get_images()
-                metadata["has_images"] = len(image_list) > 0
-                metadata["image_count"] = len(image_list)
-            except:
-                metadata["has_images"] = False
-        
         return metadata
     
-    # Process a single page of the PDF
-    def _process_page(self, args: tuple) -> Optional[Document]:
-        doc, page_idx, page, file_name, file_id = args
-        
-        try:
-            # Extract text efficiently
-            text = self._extract_text_efficiently(page)
-            
-            # Skip empty pages
-            if not text.strip():
-                return None
-            
-            # Create minimal metadata
-            metadata = self._extract_basic_metadata(doc, page_idx, page)
-            
-            # Add file information
-            metadata.update({
-                "source": self.file_path,
-                "file_name": file_name,
-                "file_id": file_id,
-                "file_type": "pdf",
-            })
-            
-            # Create document
-            return Document(page_content=text, metadata=metadata)
-            
-        except Exception as e:
-            self._log(f"Error processing page {page_idx+1}: {str(e)}")
-            return None
-    
-    # Process a batch of pages in parallel
-    def _process_batch(self, doc: fitz.Document, start_idx: int, end_idx: int, 
-                       file_name: str, file_id: str) -> List[Document]:
-        result_docs = []
-        
-        # Prepare arguments for parallel processing
-        process_args = [
-            (doc, i, doc[i], file_name, file_id) 
-            for i in range(start_idx, min(end_idx, len(doc)))
-        ]
-        
-        # Process pages in parallel
-        with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            results = list(executor.map(self._process_page, process_args))
-        
-        # Filter out None results (skipped pages)
-        return [doc for doc in results if doc is not None]
-    
-    # Main method to load the PDF and convert to Document objects
     def load(self) -> List[Document]:
-        start_time = time.time()
-        documents = []
+        """Load the PDF and convert pages to Document objects."""
+        if self.verbose:
+            self._log(f"Processing PDF: {os.path.basename(self.file_path)}")
         
+        documents = []
         file_name = os.path.basename(self.file_path)
         file_id = os.path.splitext(file_name)[0]
         
-        self._log(f"Processing PDF: {file_name}")
-        
         try:
-            # Open the PDF document with PyMuPDF
+            # Open the PDF document
             with fitz.open(self.file_path) as doc:
                 total_pages = len(doc)
                 self._log(f"PDF has {total_pages} pages")
                 
-                # Process document in batches for better memory management
-                for batch_start in range(0, total_pages, self.batch_size):
-                    batch_end = batch_start + self.batch_size
+                # Process each page
+                for page_idx, page in enumerate(doc):
+                    # Extract text using our chapter detection
+                    text = self._extract_text_with_chapter_detection(page)
                     
-                    if self.verbose:
-                        self._log(f"Processing batch: pages {batch_start+1}-{min(batch_end, total_pages)}/{total_pages}")
+                    # Skip empty pages
+                    if not text.strip():
+                        continue
                     
-                    # Process the batch
-                    batch_docs = self._process_batch(doc, batch_start, batch_end, file_name, file_id)
-                    documents.extend(batch_docs)
+                    # Create metadata
+                    metadata = self._extract_basic_metadata(doc, page_idx)
                     
-                    # Force garbage collection between batches to reduce memory usage
-                    import gc
-                    gc.collect()
+                    # Add file information
+                    metadata.update({
+                        "source": self.file_path,
+                        "file_name": file_name,
+                        "file_id": file_id,
+                        "file_type": "pdf",
+                    })
+                    
+                    # Add to document list
+                    documents.append(Document(page_content=text, metadata=metadata))
+                    
+                    # Log progress for every 10 pages
+                    if self.verbose and (page_idx + 1) % 10 == 0:
+                        self._log(f"Processed {page_idx + 1}/{total_pages} pages")
                 
-                # Handle the case where no content was extracted
+                # Handle case where no content was extracted
                 if not documents:
-                    self._log("Warning: No content extracted from PDF, trying fallback method")
-                    
-                    # Simple extraction for the whole document as fallback
-                    all_text = ""
-                    for page_idx in range(min(50, total_pages)):  # Limit to first 50 pages for speed
-                        text = self._clean_headers_and_footers(doc[page_idx].get_text())
-                        if text.strip():
-                            all_text += f"\n\n" + text
-                    
-                    if all_text.strip():
-                        documents = [Document(
-                            page_content=all_text.strip(),
-                            metadata={
-                                "source": self.file_path,
-                                "file_name": file_name,
-                                "file_id": file_id,
-                                "file_type": "pdf",
-                                "total_pages": total_pages,
-                                "extraction_method": "fallback"
-                            }
-                        )]
-                        self._log("Extracted content with fallback method")
-        
+                    self._log("Warning: No content extracted from PDF")
+                else:
+                    self._log(f"Successfully extracted {len(documents)} document segments")
+                
+                return documents
+                
         except Exception as e:
             self._log(f"Error processing PDF: {str(e)}")
+            import traceback
+            self._log(traceback.format_exc())
             return []
-        
-        total_time = time.time() - start_time
-        self._log(f"PDF processed in {total_time:.2f}s, extracted {len(documents)} documents")
-        
-        return documents
