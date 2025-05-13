@@ -44,7 +44,7 @@ class PDFLoader:
     
     def _detect_chapter_structure(self, page: fitz.Page) -> List[Dict]:
         """
-        Analyze a page for chapter headings and titles, returning text blocks with metadata.
+        Analyze a page for chapter headings, returning text blocks with metadata.
         """
         blocks = []
         
@@ -66,9 +66,6 @@ class PDFLoader:
         avg_font_size = sum(font_sizes) / len(font_sizes) if font_sizes else 12  # default fallback
         
         # Process blocks, looking for chapter patterns
-        found_chapter_heading = False
-        waiting_for_title = False
-        
         for block in dict_page.get("blocks", []):
             block_text = ""
             max_font_size = 0
@@ -95,44 +92,32 @@ class PDFLoader:
             # Check if this is a chapter heading
             is_heading = self._is_chapter_heading(block_text)
             
-            # Determine if this is a title (the block right after a chapter heading)
-            is_title = waiting_for_title
-            
             # Add to our blocks list with metadata
             blocks.append({
                 "text": block_text.strip(),
                 "font_size": max_font_size,
                 "is_chapter_heading": is_heading,
-                "is_chapter_title": is_title,
                 "bbox": block.get("bbox", [0, 0, 0, 0])
             })
             
-            # If this was a chapter heading, mark that we're waiting for the title
+            # If this was a chapter heading, update current chapter
             if is_heading:
-                found_chapter_heading = True
-                waiting_for_title = True
                 self._current_chapter = block_text.strip()
                 self._log(f"Found chapter heading: {block_text.strip()}")
-            
-            # If we were waiting for a title and found one, update the current chapter
-            elif waiting_for_title:
-                self._current_chapter += " — " + block_text.strip()
-                self._log(f"Found chapter title: {block_text.strip()}")
-                waiting_for_title = False  # Reset after finding title
         
         return blocks
     
     def _extract_text_with_chapter_detection(self, page: fitz.Page) -> str:
-        """Extract text from a page while detecting and removing chapter headings and titles."""
+        """Extract text from a page while detecting and removing chapter headings."""
         # Analyze the page for structure - this already filters out headers based on position
         blocks = self._detect_chapter_structure(page)
         
-        # Filter out chapter headings and titles
+        # Filter out chapter headings
         content_blocks = []
         
         for block in blocks:
-            # Skip chapter headings and titles
-            if block["is_chapter_heading"] or block["is_chapter_title"]:
+            # Skip chapter headings
+            if block["is_chapter_heading"]:
                 continue
                 
             # Skip page numbers
