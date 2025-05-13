@@ -22,12 +22,6 @@ def build_prompt(context_chunks, user_prompt):
     
     # Create the optimized Harry Potter prompt
     prompt = (
-        "SYSTEM: You are a helpful assistant and literary expert. "
-        "Answer the question based EXCLUSIVELY on the provided passages from the books. "
-        "For each statement in your answer, cite the specific passage number in brackets, like [PASSAGE 2]. "
-        "If the information isn't in the provided passages, admit this clearly instead of making up information. "
-        "If directly quoting the text, use quotation marks and cite the passage. "
-        "Your answers should be comprehensive yet concise, focused on directly addressing the question with evidence from the text.\n\n"
         f"RETRIEVED PASSAGES:\n\n{context}\n\n"
         f"QUESTION: {user_prompt}\n\n"
         "ANSWER:"
