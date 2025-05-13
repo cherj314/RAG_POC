@@ -1,7 +1,5 @@
 import os, sys, time, glob, re, concurrent.futures, traceback
-from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.docstore.document import Document
-from langchain_community.document_loaders import TextLoader
 from langchain_community.vectorstores.pgvector import PGVector
 from langchain_huggingface import HuggingFaceEmbeddings
 from sqlalchemy import create_engine, text
@@ -28,13 +26,11 @@ COLLECTION_NAME = os.getenv("COLLECTION_NAME")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL")
 
 # Chunking configuration
-CHUNKING_STRATEGY = os.getenv("CHUNKING_STRATEGY").lower()
-CHUNK_SIZE = int(os.getenv("CHUNK_SIZE"))
-CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP"))
-MIN_CHUNK_SIZE = int(os.getenv("MIN_CHUNK_SIZE"))
-MAX_CHUNK_SIZE = int(os.getenv("MAX_CHUNK_SIZE"))
-SEMANTIC_SIMILARITY = float(os.getenv("SEMANTIC_SIMILARITY"))
-RESPECT_STRUCTURE = os.getenv("RESPECT_STRUCTURE").lower()
+MIN_CHUNK_SIZE = int(os.getenv("MIN_CHUNK_SIZE", "200"))
+MAX_CHUNK_SIZE = int(os.getenv("MAX_CHUNK_SIZE", "800"))
+CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "200"))  # Default to 200 if not set
+SEMANTIC_SIMILARITY = float(os.getenv("SEMANTIC_SIMILARITY", "0.6"))
+RESPECT_STRUCTURE = os.getenv("RESPECT_STRUCTURE", "true").lower()
 
 # Processing parameters
 DOCS_DIR = os.getenv("DOCS_DIR")
@@ -43,6 +39,56 @@ MAX_WORKERS = int(os.getenv("MAX_WORKERS"))
 
 # Database connection string
 CONNECTION_STRING = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+
+# Clean up text content to remove headers, footers and page numbers
+def preprocess_text(text):
+    lines = text.split('\n')
+    cleaned_lines = []
+    
+    # Enhanced regex patterns for better detection
+    header_patterns = [
+        re.compile(r'^(CHAPTER|Chapter)\s+[\dIVXLC]+'),  # Chapter headings
+        re.compile(r'^THE\s+[A-Z\s]+$'),                 # ALL CAPS chapter titles
+        re.compile(r'HARRY POTTER'),                     # Book title in header
+        re.compile(r'^Page\s+\d+\s+of\s+\d+$')           # Page X of Y format
+    ]
+    
+    page_number_pattern = re.compile(r'^\s*\d+\s*$')     # Standalone numbers (page numbers)
+    
+    for line in lines:
+        line = line.strip()
+        
+        # Skip empty lines but preserve paragraph structure
+        if not line:
+            cleaned_lines.append('')
+            continue
+            
+        # Skip page numbers
+        if page_number_pattern.match(line):
+            continue
+            
+        # Check against all header patterns
+        is_header = False
+        for pattern in header_patterns:
+            if pattern.search(line):
+                is_header = True
+                break
+                
+        if is_header:
+            continue
+            
+        # Clean footer (usually at bottom of page, often contains page numbers)
+        # This is a simple heuristic - footers often start with specific markers
+        if line.startswith("Copyright ©") or line.startswith("www.") or line.endswith("Publishing"):
+            continue
+            
+        cleaned_lines.append(line)
+    
+    # Join the clean lines and normalize whitespace
+    clean_text = '\n'.join(cleaned_lines)
+    clean_text = re.sub(r'\n{3,}', '\n\n', clean_text)  # Normalize multiple line breaks
+    
+    return clean_text.strip()
 
 # Set up the PostgreSQL database with pgvector extension and optimizations
 def setup_database():
@@ -205,33 +251,31 @@ def setup_database():
     
     print(f"✅ Database setup completed in {time.time() - start_time:.2f}s")
 
-# Create the appropriate text splitter based on configuration
+# Create a semantic text splitter or fall back to recursive character splitter
 def create_text_splitter(file_extension=""):
-    # Try to use semantic chunking if selected
-    if CHUNKING_STRATEGY == "semantic" and SemanticTextSplitter is not None:
-        try:
-            print(f"  - Using semantic chunking (similarity threshold: {SEMANTIC_SIMILARITY})")
-            return SemanticTextSplitter(
-                embedding_model=EMBEDDING_MODEL,
-                similarity_threshold=SEMANTIC_SIMILARITY,
-                min_chunk_size=MIN_CHUNK_SIZE,
-                max_chunk_size=MAX_CHUNK_SIZE if file_extension != '.pdf' else MAX_CHUNK_SIZE + 200,
-                chunk_overlap=CHUNK_OVERLAP,
-                respect_structure=RESPECT_STRUCTURE,
-                verbose=True
-            )
-        except Exception as e:
-            print(f"⚠️ Error initializing semantic chunker: {str(e)}")
-            print("  - Falling back to fixed-size chunking")
-    
-    # Fall back to fixed-size chunking
-    chunk_size = CHUNK_SIZE + 200 if file_extension == '.pdf' else CHUNK_SIZE
-    print(f"  - Using fixed-size chunking (size={chunk_size}, overlap={CHUNK_OVERLAP})")
-    return RecursiveCharacterTextSplitter(
-        chunk_size=chunk_size,
-        chunk_overlap=CHUNK_OVERLAP,
-        separators=["\n\n", "\n", ". ", "! ", "? ", ";", ":", " ", ""]
-    )
+    try:
+        print(f"  - Using semantic chunking (similarity threshold: {SEMANTIC_SIMILARITY})")
+        return SemanticTextSplitter(
+            embedding_model=EMBEDDING_MODEL,
+            similarity_threshold=SEMANTIC_SIMILARITY,
+            min_chunk_size=MIN_CHUNK_SIZE,
+            max_chunk_size=MAX_CHUNK_SIZE,
+            chunk_overlap=CHUNK_OVERLAP,
+            respect_structure=RESPECT_STRUCTURE,
+            verbose=True
+        )
+    except Exception as e:
+        print(f"⚠️ Error initializing semantic chunker: {str(e)}")
+        
+        # Emergency fallback - create a minimal version
+        print(f"  - Using emergency fallback chunker")
+        from langchain.text_splitter import RecursiveCharacterTextSplitter
+        
+        return RecursiveCharacterTextSplitter(
+            chunk_size=800,
+            chunk_overlap=200,
+            separators=["\n\n", "\n", ". ", "! ", "? ", ";", ":", " ", ""]
+        )
 
 # Find all document files to be processed
 def find_documents():
@@ -249,7 +293,7 @@ def find_documents():
     
     return doc_files
 
-# Process a single document file, extract metadata, and split into chunks
+# Update the process_document function in ingest.py
 def process_document(file_path):
     try:
         start_time = time.time()
@@ -260,7 +304,7 @@ def process_document(file_path):
         
         print(f"\n📄 Processing {file_name} ({file_size:.1f} KB)...")
         
-        # Store original file content for verification
+        # Store original file content for verification (only for text files)
         original_content = ""
         try:
             if file_extension.lower() != '.pdf':
@@ -269,9 +313,62 @@ def process_document(file_path):
         except Exception as e:
             print(f"  - Note: Could not read original file for verification: {str(e)}")
         
-        # Load the document based on file type
-        loader = PDFLoader(file_path, verbose=True) if file_extension == '.pdf' else TextLoader(file_path, encoding="utf-8")
-        document = loader.load()
+        # Load the document based on file type with optimized settings
+        if file_extension == '.pdf':
+            # Use optimized settings based on file size
+            if file_size > 10240:  # 10 MB
+                # For large PDFs: more parallelism, larger batches
+                max_workers = min(os.cpu_count() or 1, 8)  # Up to 8 workers
+                batch_size = 20
+            elif file_size > 5120:  # 5 MB
+                max_workers = min(os.cpu_count() or 1, 4)  # Up to 4 workers
+                batch_size = 15
+            else:
+                # Small PDFs: less parallelism to reduce overhead
+                max_workers = 2
+                batch_size = 10
+                
+            loader = PDFLoader(
+                file_path, 
+                verbose=True,
+                max_workers=max_workers,
+                batch_size=batch_size,
+                extract_images=False  # Don't extract image info for better performance
+            )
+            document = loader.load()
+            
+            # Extra cleaning pass to remove any remaining headers/footers
+            # that might have been missed by the PDF loader
+            clean_document = []
+            for doc in document:
+                if doc.page_content:
+                    cleaned_content = preprocess_text(doc.page_content)
+                    # Only add if there's meaningful content after cleaning
+                    if cleaned_content.strip():
+                        doc.page_content = cleaned_content
+                        clean_document.append(doc)
+                    else:
+                        print(f"  - Skipping empty document segment after cleaning")
+            
+            document = clean_document
+        else:
+            # For text files, first read content and preprocess
+            with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+                original_content = f.read()
+                
+            # Apply preprocessing to text files to remove headers
+            preprocessed_content = preprocess_text(original_content)
+            
+            # Create document from preprocessed content
+            document = [Document(
+                page_content=preprocessed_content,
+                metadata={
+                    "source": file_path,
+                    "file_name": file_name,
+                    "file_id": file_id,
+                    "file_extension": file_extension,
+                }
+            )]
         
         if not document:
             print(f"❌ Failed to extract any content from {file_name}")
@@ -279,8 +376,9 @@ def process_document(file_path):
             # Last resort for non-PDF files: create a single document with the whole file
             if original_content and file_extension.lower() != '.pdf':
                 print(f"  - Creating emergency document with entire file content")
+                cleaned_content = preprocess_text(original_content)
                 document = [Document(
-                    page_content=original_content,
+                    page_content=cleaned_content,
                     metadata={
                         "source": file_path,
                         "file_name": file_name,
@@ -308,15 +406,63 @@ def process_document(file_path):
         # Split document into chunks
         try:
             chunks = text_splitter.split_documents(document)
+
+            # Additional filter to remove any chunks that are just headers, page numbers, etc.
+            # (very short chunks, or chunks that match our header patterns)
+            filtered_chunks = []
+            header_patterns = [
+                re.compile(r'^(?:CHAPTER|Chapter)\s+[\dIVXLC]+'),
+                re.compile(r'^THE\s+[A-Z\s]+$'),
+                re.compile(r'HARRY POTTER'),
+                re.compile(r'^Page\s+\d+\s+of\s+\d+$')
+            ]
+            page_number_pattern = re.compile(r'^\s*\d+\s*$')
+            
+            for chunk in chunks:
+                chunk_content = chunk.page_content.strip()
+                
+                # Skip very short chunks (likely just headers or page numbers)
+                if len(chunk_content) < MIN_CHUNK_SIZE * 0.5:
+                    print(f"  - Filtering out short chunk ({len(chunk_content)} chars)")
+                    continue
+                
+                # Check if chunk is predominantly headers or page numbers
+                lines = chunk_content.split('\n')
+                header_line_count = 0
+                
+                for line in lines:
+                    is_header = False
+                    if page_number_pattern.match(line):
+                        is_header = True
+                    else:
+                        for pattern in header_patterns:
+                            if pattern.search(line):
+                                is_header = True
+                                break
+                    
+                    if is_header:
+                        header_line_count += 1
+                
+                # If more than 40% of lines are headers, skip this chunk
+                if lines and header_line_count / len(lines) > 0.4:
+                    print(f"  - Filtering out header-heavy chunk ({header_line_count}/{len(lines)} lines)")
+                    continue
+                
+                filtered_chunks.append(chunk)
+            
+            chunks = filtered_chunks
             
             # Verify chunk content covers the entire original document
             if chunks:
                 # Check chunk coverage for text files (PDFs are harder to verify)
                 if original_content and file_extension.lower() != '.pdf':
+                    # Clean the original content first for fair comparison
+                    cleaned_original = preprocess_text(original_content)
                     total_chunks_content = " ".join([chunk.page_content for chunk in chunks])
+                    
                     # Normalize whitespace for comparison
                     chunks_content = re.sub(r'\s+', ' ', total_chunks_content).strip()
-                    original_normalized = re.sub(r'\s+', ' ', original_content).strip()
+                    original_normalized = re.sub(r'\s+', ' ', cleaned_original).strip()
                     
                     # Calculate content coverage
                     coverage_ratio = len(chunks_content) / len(original_normalized) if len(original_normalized) > 0 else 0
@@ -325,8 +471,9 @@ def process_document(file_path):
                     # If we've lost significant content, fall back to a single chunk with the entire document
                     if coverage_ratio < 0.9 and len(original_normalized) > 0:
                         print(f"  - Warning: Content coverage below 90%, adding full document as an additional chunk")
+                        # Add the cleaned original content, not the raw original
                         chunks.append(Document(
-                            page_content=original_content,
+                            page_content=cleaned_original,
                             metadata={
                                 "source": file_path,
                                 "file_name": file_name,
@@ -354,8 +501,9 @@ def process_document(file_path):
     except Exception as e:
         print(f"❌ Error processing {file_path}: {str(e)}")
         print(f"Detailed error: {traceback.format_exc()}")
+        print(f"Detailed error: {traceback.format_exc()}")
 
-# Process multiple documents using parallel processing when possible
+# Process multiple documents using optimized parallel processing
 def process_documents(doc_files):
     all_chunks = []
     
@@ -369,8 +517,15 @@ def process_documents(doc_files):
     # Sort files by type and size for better processing
     text_files = sorted([f for f in doc_files if f.lower().endswith('.txt')], 
                         key=os.path.getsize)
+    
+    # For PDFs, sort by size but also partition into size groups for optimal processing
     pdf_files = sorted([f for f in doc_files if f.lower().endswith('.pdf')], 
-                       key=os.path.getsize)
+                      key=os.path.getsize)
+    
+    # Separate PDFs into small, medium and large for optimized handling
+    small_pdfs = [f for f in pdf_files if os.path.getsize(f) < 2 * 1024 * 1024]  # < 2MB
+    medium_pdfs = [f for f in pdf_files if 2 * 1024 * 1024 <= os.path.getsize(f) < 10 * 1024 * 1024]  # 2-10MB
+    large_pdfs = [f for f in pdf_files if os.path.getsize(f) >= 10 * 1024 * 1024]  # > 10MB
     
     # Process text files in parallel
     if text_files:
@@ -378,14 +533,39 @@ def process_documents(doc_files):
         with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
             chunks_list = list(executor.map(process_document, text_files))
             for chunks in chunks_list:
-                all_chunks.extend(chunks)
+                all_chunks.extend(chunks if chunks else [])
     
-    # Process PDF files (one at a time to avoid memory issues)
-    if pdf_files:
-        print(f"📄 Processing {len(pdf_files)} PDF files...")
-        for pdf_file in pdf_files:
+    # Process small PDFs in parallel (they're small enough to handle concurrently)
+    if small_pdfs:
+        print(f"📄 Processing {len(small_pdfs)} small PDF files in parallel...")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(small_pdfs), MAX_WORKERS // 2)) as executor:
+            chunks_list = list(executor.map(process_document, small_pdfs))
+            for chunks in chunks_list:
+                all_chunks.extend(chunks if chunks else [])
+    
+    # Process medium PDFs with limited parallelism to avoid memory issues
+    if medium_pdfs:
+        print(f"📄 Processing {len(medium_pdfs)} medium-sized PDF files with limited parallelism...")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            chunks_list = list(executor.map(process_document, medium_pdfs))
+            for chunks in chunks_list:
+                all_chunks.extend(chunks if chunks else [])
+    
+    # Process large PDFs one at a time to avoid memory issues
+    if large_pdfs:
+        print(f"📄 Processing {len(large_pdfs)} large PDF files sequentially...")
+        for pdf_file in large_pdfs:
+            # Force garbage collection before processing large PDF
+            import gc
+            gc.collect()
+            
+            print(f"  - Processing large PDF: {os.path.basename(pdf_file)} ({os.path.getsize(pdf_file) / (1024 * 1024):.1f} MB)")
             chunks = process_document(pdf_file)
-            all_chunks.extend(chunks)
+            if chunks:
+                all_chunks.extend(chunks)
+                
+            # Force garbage collection after processing large PDF
+            gc.collect()
     
     total_time = time.time() - start_time
     if all_chunks:
@@ -394,7 +574,7 @@ def process_documents(doc_files):
         print("❌ No chunks were generated from documents")
     
     return all_chunks
-
+        
 # Store chunks in the vector database with batching
 def store_chunks_in_db(chunks, embeddings):
     if not chunks:

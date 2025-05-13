@@ -174,18 +174,8 @@ async def generate_proposal(request: ProposalRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generating proposal: {str(e)}")
 
-# OpenAI-compatible chat completions endpoint (without /api prefix)
-@app.post("/chat/completions")
-async def chat_completions_no_prefix(request: Request):
-    try:
-        body = await request.json()
-        chat_request = ChatRequest(**body)
-        return await process_chat_completion(chat_request)
-    except Exception as e:
-        print(f"Error processing chat request: {str(e)}")
-        return format_error_response(str(e))
-
 # OpenAI-compatible chat completions endpoint for OpenWebUI integration
+@app.post("/chat/completions")
 @app.post("/api/chat/completions")
 async def chat_completions(request: Request):
     try:
@@ -327,31 +317,6 @@ def format_error_response(error_message):
         }
     }
 
-# Endpoint to get only retrieved chunks
-@app.post("/api/retrieve-chunks")
-async def retrieve_chunks(request: ProposalRequest):
-    try:
-        ensure_initialized()
-        chunks = search_postgres(
-            request.query,
-            k=request.max_chunks,
-            similarity_threshold=request.similarity_threshold
-        )
-        
-        if not chunks:
-            return {
-                "success": False,
-                "message": "No relevant content found for the query."
-            }
-        
-        return {
-            "success": True,
-            "retrieved_chunks": format_retrieved_chunks(chunks),
-            "metadata": {"query": request.query}
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error retrieving chunks: {str(e)}")
-
 # Streaming response generator for OpenAI-compatible streaming
 async def stream_response(content: str):
     # Split the content into paragraphs
@@ -413,12 +378,33 @@ async def stream_response(content: str):
     yield f"data: {json.dumps(end_data)}\n\n"
     yield "data: [DONE]\n\n"
 
-# OpenAI-compatible models endpoint (without /api prefix)
-@app.get("/models")
-async def list_models_no_prefix():
-    return await list_models()
+# Endpoint to get only retrieved chunks
+@app.post("/api/retrieve-chunks")
+async def retrieve_chunks(request: ProposalRequest):
+    try:
+        ensure_initialized()
+        chunks = search_postgres(
+            request.query,
+            k=request.max_chunks,
+            similarity_threshold=request.similarity_threshold
+        )
+        
+        if not chunks:
+            return {
+                "success": False,
+                "message": "No relevant content found for the query."
+            }
+        
+        return {
+            "success": True,
+            "retrieved_chunks": format_retrieved_chunks(chunks),
+            "metadata": {"query": request.query}
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error retrieving chunks: {str(e)}")
 
 # OpenAI-compatible models endpoint
+@app.get("/models")
 @app.get("/api/models")
 async def list_models():
     try:

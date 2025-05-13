@@ -40,8 +40,11 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL}
       - COLLECTION_NAME=${COLLECTION_NAME}
-      - CHUNK_SIZE=${CHUNK_SIZE}
+      - MIN_CHUNK_SIZE=${MIN_CHUNK_SIZE}
+      - MAX_CHUNK_SIZE=${MAX_CHUNK_SIZE}
       - CHUNK_OVERLAP=${CHUNK_OVERLAP}
+      - SEMANTIC_SIMILARITY=${SEMANTIC_SIMILARITY}
+      - RESPECT_STRUCTURE=${RESPECT_STRUCTURE}
       - DEFAULT_MODEL_TYPE=${DEFAULT_MODEL_TYPE}
       - AVAILABLE_MODEL_TYPES=${AVAILABLE_MODEL_TYPES}
       - OPENAI_MODEL=${OPENAI_MODEL}
@@ -81,8 +84,11 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL}
       - COLLECTION_NAME=${COLLECTION_NAME}
-      - CHUNK_SIZE=${CHUNK_SIZE}
+      - MIN_CHUNK_SIZE=${MIN_CHUNK_SIZE}
+      - MAX_CHUNK_SIZE=${MAX_CHUNK_SIZE}
       - CHUNK_OVERLAP=${CHUNK_OVERLAP}
+      - SEMANTIC_SIMILARITY=${SEMANTIC_SIMILARITY}
+      - RESPECT_STRUCTURE=${RESPECT_STRUCTURE}
       - BATCH_SIZE=${BATCH_SIZE}
       - PYTHONUNBUFFERED=1
     depends_on:
@@ -99,8 +105,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '4'
-          memory: 4G
+          cpus: '8'
+          memory: 8G
 
   ollama:
     build:
@@ -135,7 +141,6 @@ services:
       - CORS_ALLOW_ORIGIN=http://localhost:${WEBUI_PORT}
     volumes:
         - openwebui-data:/app/backend/data
-        - ./custom_plugin:/app/backend/data/plugins
     depends_on:
       ragbot-api:
         condition: service_started

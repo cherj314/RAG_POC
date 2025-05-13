@@ -14,7 +14,7 @@ DB_PASSWORD=your_secure_password_here
 COLLECTION_NAME=document_chunks
 
 # Embedding model to use for document vectorization
-EMBEDDING_MODEL=sentence-transformers/all-mpnet-base-v2
+EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
 
 # LLM Configuration
 # Default model type (openai or ollama)
@@ -35,24 +35,12 @@ OLLAMA_BASE_URL=http://ollama:11434
 OLLAMA_PORT=11434
 
 # Chunking Configuration
-# Use either "fixed" or "semantic" chunking strategy
-CHUNKING_STRATEGY=semantic
-
-# Fixed-size chunking parameters (used if CHUNKING_STRATEGY=fixed)
-# Size of text chunks for vectorization
-CHUNK_SIZE=600
-# Overlap between consecutive chunks
-CHUNK_OVERLAP=100
-
-# Semantic chunking parameters (used if CHUNKING_STRATEGY=semantic)
-# Minimum size of chunks
-MIN_CHUNK_SIZE=200
-# Maximum size of chunks
-MAX_CHUNK_SIZE=800
-# Semantic similarity threshold (0.0-1.0) for determining chunk boundaries
-SEMANTIC_SIMILARITY=0.6
-# Whether to respect document structure like headings and lists (true/false)
+# Chunking Configuration
+MIN_CHUNK_SIZE=200  # Reduced from 500
+MAX_CHUNK_SIZE=3000  # Increased from 2000
+SEMANTIC_SIMILARITY=0.6  # Increased from 0.4
 RESPECT_STRUCTURE=true
+CHUNK_OVERLAP=200  # New parameter
 
 # Processing Parameters
 # Batch size for processing documents

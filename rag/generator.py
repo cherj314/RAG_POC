@@ -3,11 +3,7 @@ from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
-
-# Configure OpenAI client
 openai.api_key = os.getenv("OPENAI_API_KEY")
-
-# Ollama configuration
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL")
 
@@ -20,7 +16,6 @@ def generate_response(
     temperature=0.3, 
     preserve_formatting=True
 ):
-    # Determine model type if not specified
     if model_type is None:
         model_type = os.getenv("DEFAULT_MODEL_TYPE", "openai").lower()
     
@@ -230,7 +225,6 @@ def get_available_models():
         "ollama": ["tinyllama"]
     }
     
-    # Try to get available Ollama models
     try:
         response = requests.get(f"{OLLAMA_BASE_URL}/api/tags")
         if response.status_code == 200:

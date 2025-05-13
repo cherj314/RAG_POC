@@ -110,7 +110,7 @@ def perform_hybrid_search(conn, query: str, collection_id: str,
             """
             
             # Execute with parameters (simplified parameter list)
-            cur.execute(sql_query, (embedding.tolist(), collection_id, k * 2))
+            cur.execute(sql_query, (embedding.tolist(), collection_id, k))
             
             # Process results with combined scoring
             results = []
@@ -171,41 +171,6 @@ def perform_hybrid_search(conn, query: str, collection_id: str,
     
     return results
 
-# Ensure diversity in results by removing redundant content
-def ensure_content_diversity(results: List[Tuple], k: int = 5) -> List[Tuple]:
-    if len(results) <= 1:
-        return results
-    
-    # Sort by score first
-    sorted_results = sorted(results, key=lambda x: x[2], reverse=True)
-    
-    # Track which documents to keep
-    filtered_results = []
-    content_fingerprints = set()
-    
-    for doc, metadata, score in sorted_results:
-        # Create a content fingerprint (first 100 chars + 5 words from middle + last 100 chars)
-        doc_words = doc.split()
-        
-        # Get start, middle and end segments
-        start = doc[:100].strip().lower()
-        middle = ' '.join(doc_words[len(doc_words)//2:len(doc_words)//2+5]).lower() if len(doc_words) > 10 else ""
-        end = doc[-100:].strip().lower()
-        
-        # Create fingerprint
-        fingerprint = f"{start}|{middle}|{end}"
-        
-        # Check if we've seen very similar content
-        if fingerprint not in content_fingerprints:
-            content_fingerprints.add(fingerprint)
-            filtered_results.append((doc, metadata, score))
-            
-            # Stop if we have enough results
-            if len(filtered_results) >= k:
-                break
-    
-    return filtered_results
-
 # Search function for PostgreSQL with enhanced retrieval for Harry Potter
 def search_postgres(query, k=5, similarity_threshold=0.3, debug=False):
     if debug:
@@ -221,34 +186,19 @@ def search_postgres(query, k=5, similarity_threshold=0.3, debug=False):
     
     try:
         collection_id = get_cached_collection_id(conn)
-        
-        if debug:
-            print(f"Using collection ID: {collection_id}")
-        
+
         # Perform hybrid search combining vector similarity and keyword matching
         results = perform_hybrid_search(
             conn=conn,
             query=query,
             collection_id=collection_id,
             embedding=embedding,
-            k=k * 2,  # Get more initial results for filtering
+            k=k,  # Get more initial results for filtering
             similarity_threshold=similarity_threshold,
             debug=debug
         )
         
-        if debug:
-            print(f"Initial search returned {len(results)} results")
-        
-        # Apply content diversity filtering
-        final_results = ensure_content_diversity(results, k=k)
-        
-        if debug:
-            print(f"Final result count after diversity filtering: {len(final_results)}")
-            for i, (doc, metadata, score) in enumerate(final_results, 1):
-                source = metadata.get("file_name", "Unknown") if isinstance(metadata, dict) else "Unknown"
-                print(f"Result {i}: {source} - Score: {score:.3f}")
-        
-        return final_results
+        return results
         
     except Exception as e:
         print(f"Error in search_postgres: {e}")
