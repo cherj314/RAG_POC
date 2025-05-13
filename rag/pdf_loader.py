@@ -1,7 +1,6 @@
-import os
-import re
+import os, re
 import fitz   # type: ignore
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from langchain.docstore.document import Document
 
 class PDFLoader:
