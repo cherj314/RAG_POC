@@ -10,8 +10,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Import project modules
 from rag.retriever import search_postgres, get_embed_model
-from rag.prompt_builder import build_prompt
-from rag.generator import generate_response, get_available_models
+from rag.generator import generate_response, get_available_models, build_prompt
 from rag.config import init_db_pool, get_db_connection, release_connection
 
 # Initialize FastAPI app
