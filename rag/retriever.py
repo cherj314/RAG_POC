@@ -124,39 +124,3 @@ def search_postgres(query, k=5, similarity_threshold=0.3, debug=False):
     finally:
         # Always release the connection back to the pool
         release_connection(conn)
-
-    if debug:
-        print(f"Searching for query: '{query}'")
-        print(f"Similarity threshold: {similarity_threshold}")
-    
-    # Generate embedding for the query
-    model = get_embed_model()
-    embedding = model.encode(query)
-    
-    # Connect to the PostgreSQL database
-    conn = get_db_connection()
-    
-    try:
-        collection_id = get_cached_collection_id(conn)
-
-        # Perform hybrid search combining vector similarity and keyword matching
-        results = perform_vector_search(
-            conn=conn,
-            query=query,
-            collection_id=collection_id,
-            embedding=embedding,
-            k=k,  # Get more initial results for filtering
-            similarity_threshold=similarity_threshold,
-            debug=debug
-        )
-        
-        return results
-        
-    except Exception as e:
-        print(f"Error in search_postgres: {e}")
-        import traceback
-        print(traceback.format_exc())
-        return []
-    finally:
-        # Always release the connection back to the pool
-        release_connection(conn)
