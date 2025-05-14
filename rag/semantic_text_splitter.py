@@ -1,20 +1,10 @@
-import os, re, nltk
-from typing import List, Optional, Dict, Any
+import re
+from typing import List, Optional
 from langchain.docstore.document import Document
 from langchain.text_splitter import TextSplitter
 from sentence_transformers import SentenceTransformer
 import numpy as np
 
-# Ensure NLTK data is available
-nltk_data_dir = os.getenv('NLTK_DATA', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'nltk_data'))
-os.makedirs(nltk_data_dir, exist_ok=True)
-nltk.data.path.insert(0, nltk_data_dir)
-
-# Download NLTK punkt if not already available
-try:
-    nltk.data.find('tokenizers/punkt')
-except LookupError:
-    nltk.download('punkt', download_dir=nltk_data_dir, quiet=True)
 
 class SemanticTextSplitter(TextSplitter):
     """

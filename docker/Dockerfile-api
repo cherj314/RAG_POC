@@ -25,13 +25,6 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt \
     && pip install --no-cache-dir huggingface_hub[hf_xet]
 
-# Set up NLTK data directory with proper permissions
-ENV NLTK_DATA=/app/nltk_data
-RUN mkdir -p $NLTK_DATA && chmod -R 777 $NLTK_DATA
-
-# Simple download of punkt tokenizer
-RUN python -m nltk.downloader -d /app/nltk_data punkt
-
 # Create necessary directories
 RUN mkdir -p Documents
 
