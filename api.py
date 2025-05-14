@@ -34,10 +34,13 @@ AVAILABLE_MODEL_TYPES = os.getenv("AVAILABLE_MODEL_TYPES").lower().split(",")
 DEFAULT_OPENAI_MODEL = os.getenv("OPENAI_MODEL")
 DEFAULT_OLLAMA_MODEL = os.getenv("OLLAMA_MODEL")
 
+# Get query similarity threshold from environment
+QUERY_SIMILARITY_THRESHOLD = float(os.getenv("QUERY_SIMILARITY_THRESHOLD", "0.3"))
+
 # Define request and response models
 class ProposalRequest(BaseModel):
     query: str
-    similarity_threshold: Optional[float] = 0.5
+    similarity_threshold: Optional[float] = QUERY_SIMILARITY_THRESHOLD
     max_chunks: Optional[int] = 5
     show_retrieved_only: Optional[bool] = False
     model_type: Optional[str] = DEFAULT_MODEL_TYPE
@@ -54,6 +57,7 @@ class ChatRequest(BaseModel):
     temperature: Optional[float] = 0.7
     max_tokens: Optional[int] = 2048
     show_retrieved: Optional[bool] = True
+    similarity_threshold: Optional[float] = QUERY_SIMILARITY_THRESHOLD
     
 class RetrievedChunk(BaseModel):
     content: str
@@ -199,11 +203,14 @@ async def process_chat_completion(request: ChatRequest):
         # Parse model type and name from the model string
         model_type, model_name = parse_model_info(request.model)
         
+        # Use the similarity threshold from the request or the default
+        similarity_threshold = getattr(request, 'similarity_threshold', QUERY_SIMILARITY_THRESHOLD)
+        
         # Process the query using our RAG pipeline
         chunks = search_postgres(
             last_user_message,
             k=5,
-            similarity_threshold=0.3
+            similarity_threshold=similarity_threshold
         )
         
         # Format retrieved chunks

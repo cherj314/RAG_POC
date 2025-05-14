@@ -41,6 +41,10 @@ SEMANTIC_SIMILARITY=0.6  # Increased from 0.4
 RESPECT_STRUCTURE=true
 CHUNK_OVERLAP=200  # New parameter
 
+# Query Configuration
+# Minimum similarity threshold for retrieved chunks (at query time)
+QUERY_SIMILARITY_THRESHOLD=0.3
+
 # Processing Parameters
 # Batch size for processing documents
 BATCH_SIZE=500
