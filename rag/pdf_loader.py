@@ -19,6 +19,8 @@ class PDFLoader:
             # Match various forms of Harry Potter style chapter headings
             'chapter_heading': re.compile(r'(?:—\s*)?CHAPTER\s+(?:[A-Z]+|\d+)(?:\s+[A-Z]+)?(?:\s*—)?', re.IGNORECASE),
             'page_number': re.compile(r'^\s*\d+\s*$'),
+            # Pattern to identify sentence boundaries
+            'sentence_end': re.compile(r'[.!?][\'\"]?\s+')
         }
     
     def _log(self, message: str) -> None:
@@ -40,6 +42,32 @@ class PDFLoader:
             return True
         
         return False
+    
+    def _ensure_complete_sentences(self, text: str) -> str:
+        """Ensure text starts and ends with complete sentences."""
+        if not text.strip():
+            return text
+            
+        # Check if text ends with a sentence terminator
+        if not re.search(r'[.!?][\'\"]?$', text.strip()):
+            # Find the last sentence boundary
+            match = list(re.finditer(r'[.!?][\'\"]?\s+', text))
+            if match:
+                # Get the position of the last sentence terminator
+                last_terminator_pos = match[-1].end()
+                # Return the text up to that position
+                text = text[:last_terminator_pos].strip()
+        
+        # Check if text starts with a capital letter
+        # If not, it might be in the middle of a sentence
+        if text and not text[0].isupper() and not text[0].isdigit():
+            # Try to find the next sentence start
+            match = re.search(r'[.!?][\'\"]?\s+([A-Z0-9])', text)
+            if match:
+                # Start from the beginning of the next sentence
+                text = text[match.start(1)-1:].strip()
+        
+        return text
     
     def _detect_chapter_structure(self, page: fitz.Page) -> List[Dict]:
         """
@@ -126,7 +154,10 @@ class PDFLoader:
             content_blocks.append(block["text"])
         
         # Join all content blocks
-        return "\n\n".join(content_blocks)
+        page_text = "\n\n".join(content_blocks)
+        
+        # Ensure the text has complete sentences
+        return self._ensure_complete_sentences(page_text)
     
     def _extract_basic_metadata(self, doc: fitz.Document, page_idx: int) -> Dict[str, Any]:
         """Extract basic metadata about the page and current chapter."""
@@ -178,10 +209,6 @@ class PDFLoader:
                     
                     # Add to document list
                     documents.append(Document(page_content=text, metadata=metadata))
-                    
-                    # Log progress for every 10 pages
-                    if self.verbose and (page_idx + 1) % 10 == 0:
-                        self._log(f"Processed {page_idx + 1}/{total_pages} pages")
                 
                 # Handle case where no content was extracted
                 if not documents:

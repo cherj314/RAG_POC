@@ -221,6 +221,7 @@ def create_text_splitter(file_extension=""):
         print(f"  - Using emergency fallback chunker")
         from langchain.text_splitter import RecursiveCharacterTextSplitter
         
+        # Use separators that respect sentence boundaries
         return RecursiveCharacterTextSplitter(
             chunk_size=800,
             chunk_overlap=200,
@@ -242,6 +243,39 @@ def find_documents():
     print(f"  - Found {len(txt_files)} text files and {len(pdf_files)} PDF files")
     
     return doc_files
+
+# Ensure text has complete sentences
+def ensure_complete_sentences(text):
+    """Ensure text starts and ends with complete sentences."""
+    if not text or not text.strip():
+        return text
+        
+    # Pattern to identify sentence boundaries and ending
+    sentence_end_pattern = re.compile(r'[.!?][\'"]*\s+')
+    sentence_end_final = re.compile(r'[.!?][\'"]*$')
+    
+    text = text.strip()
+    
+    # Check if text ends with a sentence terminator
+    if not sentence_end_final.search(text):
+        # Find the last sentence boundary
+        match = list(sentence_end_pattern.finditer(text))
+        if match:
+            # Get the position of the last sentence terminator
+            last_terminator_pos = match[-1].end()
+            # Return the text up to that position
+            text = text[:last_terminator_pos].strip()
+    
+    # Check if text starts with a capital letter
+    # If not, it might be in the middle of a sentence
+    if text and not text[0].isupper() and not text[0].isdigit() and not text[0] == '"':
+        # Try to find the next sentence start
+        match = re.search(r'[.!?][\'"]*\s+([A-Z0-9])', text)
+        if match:
+            # Start from the beginning of the next sentence
+            text = text[match.start(1)-1:].strip()
+    
+    return text
 
 # Update the process_document function in ingest.py
 def process_document(file_path):
@@ -291,6 +325,8 @@ def process_document(file_path):
             clean_document = []
             for doc in document:
                 if doc.page_content and doc.page_content.strip():
+                    # Ensure each document has complete sentences
+                    doc.page_content = ensure_complete_sentences(doc.page_content)
                     clean_document.append(doc)
                 else:
                     print(f"  - Skipping empty document segment")
@@ -302,7 +338,7 @@ def process_document(file_path):
                 original_content = f.read()
                 
             document = [Document(
-                page_content=original_content,
+                page_content=ensure_complete_sentences(original_content),
                 metadata={
                     "source": file_path,
                     "file_name": file_name,
@@ -318,7 +354,7 @@ def process_document(file_path):
             if original_content and file_extension.lower() != '.pdf':
                 print(f"  - Creating emergency document with entire file content")
                 document = [Document(
-                    page_content=original_content,
+                    page_content=ensure_complete_sentences(original_content),
                     metadata={
                         "source": file_path,
                         "file_name": file_name,
@@ -362,7 +398,7 @@ def process_document(file_path):
                 chunk_content = chunk.page_content.strip()
                 
                 # Skip very short chunks (likely just headers or page numbers)
-                if len(chunk_content) < MIN_CHUNK_SIZE * 0.5:
+                if len(chunk_content) < MIN_CHUNK_SIZE * 0.1:
                     print(f"  - Filtering out short chunk ({len(chunk_content)} chars)")
                     continue
                 
@@ -388,6 +424,8 @@ def process_document(file_path):
                     print(f"  - Filtering out header-heavy chunk ({header_line_count}/{len(lines)} lines)")
                     continue
                 
+                # Ensure each chunk has complete sentences
+                chunk.page_content = ensure_complete_sentences(chunk.page_content)
                 filtered_chunks.append(chunk)
             
             chunks = filtered_chunks
@@ -410,7 +448,7 @@ def process_document(file_path):
                     if coverage_ratio < 0.9 and len(original_normalized) > 0:
                         print(f"  - Warning: Content coverage below 90%, adding full document as an additional chunk")
                         chunks.append(Document(
-                            page_content=original_content,
+                            page_content=ensure_complete_sentences(original_content),
                             metadata={
                                 "source": file_path,
                                 "file_name": file_name,
@@ -519,6 +557,10 @@ def store_chunks_in_db(chunks, embeddings):
         
     print(f"💾 Storing {len(chunks)} chunks in vector database...")
     start_time = time.time()
+    
+    # Final check to ensure all chunks start and end with complete sentences
+    for i, chunk in enumerate(chunks):
+        chunks[i].page_content = ensure_complete_sentences(chunk.page_content)
     
     # Split chunks into batches
     batches = [chunks[i:i + BATCH_SIZE] for i in range(0, len(chunks), BATCH_SIZE)]
