@@ -40,56 +40,6 @@ MAX_WORKERS = int(os.getenv("MAX_WORKERS"))
 # Database connection string
 CONNECTION_STRING = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
-# Clean up text content to remove headers, footers and page numbers
-def preprocess_text(text):
-    lines = text.split('\n')
-    cleaned_lines = []
-    
-    # Enhanced regex patterns for better detection
-    header_patterns = [
-        re.compile(r'^(CHAPTER|Chapter)\s+[\dIVXLC]+'),  # Chapter headings
-        re.compile(r'^THE\s+[A-Z\s]+$'),                 # ALL CAPS chapter titles
-        re.compile(r'HARRY POTTER'),                     # Book title in header
-        re.compile(r'^Page\s+\d+\s+of\s+\d+$')           # Page X of Y format
-    ]
-    
-    page_number_pattern = re.compile(r'^\s*\d+\s*$')     # Standalone numbers (page numbers)
-    
-    for line in lines:
-        line = line.strip()
-        
-        # Skip empty lines but preserve paragraph structure
-        if not line:
-            cleaned_lines.append('')
-            continue
-            
-        # Skip page numbers
-        if page_number_pattern.match(line):
-            continue
-            
-        # Check against all header patterns
-        is_header = False
-        for pattern in header_patterns:
-            if pattern.search(line):
-                is_header = True
-                break
-                
-        if is_header:
-            continue
-            
-        # Clean footer (usually at bottom of page, often contains page numbers)
-        # This is a simple heuristic - footers often start with specific markers
-        if line.startswith("Copyright ©") or line.startswith("www.") or line.endswith("Publishing"):
-            continue
-            
-        cleaned_lines.append(line)
-    
-    # Join the clean lines and normalize whitespace
-    clean_text = '\n'.join(cleaned_lines)
-    clean_text = re.sub(r'\n{3,}', '\n\n', clean_text)  # Normalize multiple line breaks
-    
-    return clean_text.strip()
-
 # Set up the PostgreSQL database with pgvector extension and optimizations
 def setup_database():
     print("📊 Setting up database...")
@@ -337,31 +287,22 @@ def process_document(file_path):
             )
             document = loader.load()
             
-            # Extra cleaning pass to remove any remaining headers/footers
-            # that might have been missed by the PDF loader
+            # Filter empty documents
             clean_document = []
             for doc in document:
-                if doc.page_content:
-                    cleaned_content = preprocess_text(doc.page_content)
-                    # Only add if there's meaningful content after cleaning
-                    if cleaned_content.strip():
-                        doc.page_content = cleaned_content
-                        clean_document.append(doc)
-                    else:
-                        print(f"  - Skipping empty document segment after cleaning")
+                if doc.page_content and doc.page_content.strip():
+                    clean_document.append(doc)
+                else:
+                    print(f"  - Skipping empty document segment")
             
             document = clean_document
         else:
-            # For text files, first read content and preprocess
+            # For text files, just create a document with the original content
             with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
                 original_content = f.read()
                 
-            # Apply preprocessing to text files to remove headers
-            preprocessed_content = preprocess_text(original_content)
-            
-            # Create document from preprocessed content
             document = [Document(
-                page_content=preprocessed_content,
+                page_content=original_content,
                 metadata={
                     "source": file_path,
                     "file_name": file_name,
@@ -376,9 +317,8 @@ def process_document(file_path):
             # Last resort for non-PDF files: create a single document with the whole file
             if original_content and file_extension.lower() != '.pdf':
                 print(f"  - Creating emergency document with entire file content")
-                cleaned_content = preprocess_text(original_content)
                 document = [Document(
-                    page_content=cleaned_content,
+                    page_content=original_content,
                     metadata={
                         "source": file_path,
                         "file_name": file_name,
@@ -456,13 +396,11 @@ def process_document(file_path):
             if chunks:
                 # Check chunk coverage for text files (PDFs are harder to verify)
                 if original_content and file_extension.lower() != '.pdf':
-                    # Clean the original content first for fair comparison
-                    cleaned_original = preprocess_text(original_content)
                     total_chunks_content = " ".join([chunk.page_content for chunk in chunks])
                     
                     # Normalize whitespace for comparison
                     chunks_content = re.sub(r'\s+', ' ', total_chunks_content).strip()
-                    original_normalized = re.sub(r'\s+', ' ', cleaned_original).strip()
+                    original_normalized = re.sub(r'\s+', ' ', original_content).strip()
                     
                     # Calculate content coverage
                     coverage_ratio = len(chunks_content) / len(original_normalized) if len(original_normalized) > 0 else 0
@@ -471,9 +409,8 @@ def process_document(file_path):
                     # If we've lost significant content, fall back to a single chunk with the entire document
                     if coverage_ratio < 0.9 and len(original_normalized) > 0:
                         print(f"  - Warning: Content coverage below 90%, adding full document as an additional chunk")
-                        # Add the cleaned original content, not the raw original
                         chunks.append(Document(
-                            page_content=cleaned_original,
+                            page_content=original_content,
                             metadata={
                                 "source": file_path,
                                 "file_name": file_name,
@@ -500,7 +437,6 @@ def process_document(file_path):
             
     except Exception as e:
         print(f"❌ Error processing {file_path}: {str(e)}")
-        print(f"Detailed error: {traceback.format_exc()}")
         print(f"Detailed error: {traceback.format_exc()}")
 
 # Process multiple documents using optimized parallel processing
