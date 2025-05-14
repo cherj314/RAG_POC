@@ -85,7 +85,6 @@ class PDFLoader:
             
             # Skip headers
             if is_header:
-                self._log(f"Skipping header text: {block_text[:30]}...")
                 continue
                 
             # Check if this is a chapter heading
