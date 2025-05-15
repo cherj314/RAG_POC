@@ -33,131 +33,33 @@ CONNECTION_STRING = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{
 
 # Set up the PostgreSQL database with pgvector extension and optimizations
 def setup_database():
+    """Set up the PostgreSQL database with pgvector extension and required tables."""
     print("📊 Setting up database...")
     start_time = time.time()
     
     engine = create_engine(CONNECTION_STRING)
     
-    # First handle vector dimension update for the new embedding model
-    # This needs to happen before other operations
-    vector_dim_operations = [
-    # Drop existing index first if it exists
-    """
-    DO $$
-    BEGIN
-        IF EXISTS (
-            SELECT 1
-            FROM pg_indexes
-            WHERE indexname = 'langchain_pg_embedding_vector_idx'
-        ) THEN
-            DROP INDEX langchain_pg_embedding_vector_idx;
-        END IF;
-    END
-    $$;
-    """,
-    
-    # Drop the table if it exists to avoid dimension mismatch
-    """
-    DROP TABLE IF EXISTS langchain_pg_embedding;
-    """,
-    
-    # Create the table with the correct dimension based on model
-    """
-    DO $$
-    DECLARE
-        vector_dim INT;
-    BEGIN
-        -- Set vector dimension based on model name
-        IF '{}' LIKE '%mpnet%' THEN
-            vector_dim := 768;
-        ELSE
-            vector_dim := 384;
-        END IF;
-        
-        -- Log the dimension being used
-        RAISE NOTICE 'Setting vector dimension to %', vector_dim;
-        
-        -- Create the collection table if needed
-        IF NOT EXISTS (
-            SELECT FROM information_schema.tables 
-            WHERE table_schema = 'public' 
-            AND table_name = 'langchain_pg_collection'
-        ) THEN
-            CREATE TABLE langchain_pg_collection (
-                uuid UUID PRIMARY KEY,
-                name TEXT NOT NULL,
-                cmetadata JSONB
-            );
-        END IF;
-    END;
-    $$;
-    """.format(EMBEDDING_MODEL)  # Use format to insert the model name directly
-    ]
-    
-    # Execute the vector dimension update operations
-    for operation in vector_dim_operations:
-        try:
-            with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
-                connection.execute(text(operation))
-                print(f"  - Executed vector dimension update")
-        except Exception as e:
-            print(f"  - Warning: Vector dimension update operation failed: {str(e)}")
-    
-    # Try to set the model name as a session variable
-    try:
-        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
-            connection.execute(text(f"SET app.embedding_model = '{EMBEDDING_MODEL}'"))
-    except:
-        print("  - Note: Could not set model name as session variable")
-    
-    # Regular database operations
-    regular_operations = [
+    # Vector dimension operations and other database setup in a single transaction where possible
+    operations = [
         # Enable pgvector extension
         "CREATE EXTENSION IF NOT EXISTS vector",
         
-        # Create an IVFFlat index if needed (with the right dimensions)
+        # Handle collection table creation
         """
-        DO $$
-        BEGIN
-            IF EXISTS (
-                SELECT FROM information_schema.tables 
-                WHERE table_schema = 'public' 
-                AND table_name = 'langchain_pg_embedding'
-            ) AND NOT EXISTS (
-                SELECT 1
-                FROM pg_indexes
-                WHERE indexname = 'langchain_pg_embedding_vector_idx'
-            ) THEN
-                CREATE INDEX langchain_pg_embedding_vector_idx
-                ON langchain_pg_embedding
-                USING ivfflat (embedding vector_cosine_ops)
-                WITH (lists = 100);
-            END IF;
-        END
-        $$;
+        CREATE TABLE IF NOT EXISTS langchain_pg_collection (
+            uuid UUID PRIMARY KEY,
+            name TEXT NOT NULL,
+            cmetadata JSONB
+        )
         """,
         
-        # Add an index on collection_id
+        # Drop existing index and embedding table to avoid dimension mismatch
         """
-        DO $$
-        BEGIN
-            IF EXISTS (
-                SELECT FROM information_schema.tables 
-                WHERE table_schema = 'public' 
-                AND table_name = 'langchain_pg_embedding'
-            ) AND NOT EXISTS (
-                SELECT 1
-                FROM pg_indexes
-                WHERE indexname = 'langchain_pg_embedding_collection_id_idx'
-            ) THEN
-                CREATE INDEX langchain_pg_embedding_collection_id_idx
-                ON langchain_pg_embedding(collection_id);
-            END IF;
-        END
-        $$;
+        DROP INDEX IF EXISTS langchain_pg_embedding_vector_idx;
+        DROP TABLE IF EXISTS langchain_pg_embedding;
         """,
         
-        # Analyze tables for query optimization
+        # Create indexes once tables exist
         """
         DO $$
         BEGIN
@@ -166,29 +68,44 @@ def setup_database():
                 WHERE table_schema = 'public' 
                 AND table_name = 'langchain_pg_embedding'
             ) THEN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_indexes
+                    WHERE indexname = 'langchain_pg_embedding_vector_idx'
+                ) THEN
+                    CREATE INDEX langchain_pg_embedding_vector_idx
+                    ON langchain_pg_embedding
+                    USING ivfflat (embedding vector_cosine_ops)
+                    WITH (lists = 100);
+                END IF;
+                
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_indexes
+                    WHERE indexname = 'langchain_pg_embedding_collection_id_idx'
+                ) THEN
+                    CREATE INDEX langchain_pg_embedding_collection_id_idx
+                    ON langchain_pg_embedding(collection_id);
+                END IF;
+                
                 ANALYZE langchain_pg_embedding;
             END IF;
-        END
-        $$;
+        END $$;
         """
     ]
     
-    system_operations = [
-        # Optimize database parameters - must be outside transaction
-        "ALTER SYSTEM SET work_mem = '32MB'",
-        "SELECT pg_reload_conf()"
-    ]
-    
-    # Execute regular operations in a transaction
+    # Execute main operations in a transaction
     with engine.connect() as connection:
-        for operation in regular_operations:
+        for operation in operations:
             connection.execute(text(operation))
         connection.commit()
     
-    # Execute system operations outside of transactions
+    # Set model name as session variable and optimize database parameters
     with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
-        for operation in system_operations:
-            connection.execute(text(operation))
+        try:
+            connection.execute(text(f"SET app.embedding_model = '{EMBEDDING_MODEL}'"))
+            connection.execute(text("ALTER SYSTEM SET work_mem = '32MB'"))
+            connection.execute(text("SELECT pg_reload_conf()"))
+        except Exception as e:
+            print(f"  - Note: Some system settings could not be applied: {str(e)}")
     
     print(f"✅ Database setup completed in {time.time() - start_time:.2f}s")
 
