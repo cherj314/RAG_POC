@@ -51,6 +51,7 @@ services:
       - OLLAMA_MODEL=${OLLAMA_MODEL}
       - OLLAMA_BASE_URL=http://ollama:11434
       - PYTHONUNBUFFERED=1
+      - TOKENIZERS_PARALLELISM=false
     depends_on:
       postgres:
         condition: service_healthy
@@ -91,6 +92,7 @@ services:
       - RESPECT_STRUCTURE=${RESPECT_STRUCTURE}
       - BATCH_SIZE=${BATCH_SIZE}
       - PYTHONUNBUFFERED=1
+      - TOKENIZERS_PARALLELISM=false
     depends_on:
       postgres:
         condition: service_healthy
@@ -139,6 +141,7 @@ services:
       - CUSTOM_API_CONTEXT_SIZE=4096
       - API_BACKEND=custom
       - CORS_ALLOW_ORIGIN=http://localhost:${WEBUI_PORT}
+      - TOKENIZERS_PARALLELISM=false
     volumes:
         - openwebui-data:/app/backend/data
     depends_on:
