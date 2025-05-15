@@ -10,6 +10,7 @@ from semantic_text_splitter import SemanticTextSplitter
 # Load environment variables
 load_dotenv()
 
+# Get environment variables with defaults
 DB_HOST = os.getenv("DB_HOST")
 DB_PORT = int(os.getenv("DB_PORT"))
 DB_NAME = os.getenv("POSTGRES_DB")
@@ -17,13 +18,11 @@ DB_USER = os.getenv("POSTGRES_USER")
 DB_PASSWORD = os.getenv("POSTGRES_PASSWORD")
 COLLECTION_NAME = os.getenv("COLLECTION_NAME")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL")
-
 MIN_CHUNK_SIZE = int(os.getenv("MIN_CHUNK_SIZE", "200"))
 MAX_CHUNK_SIZE = int(os.getenv("MAX_CHUNK_SIZE", "800"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "200"))  
 SEMANTIC_SIMILARITY = float(os.getenv("SEMANTIC_SIMILARITY", "0.6"))
-RESPECT_STRUCTURE = os.getenv("RESPECT_STRUCTURE", "true").lower()
-
+RESPECT_STRUCTURE = os.getenv("RESPECT_STRUCTURE", "true").lower() == "true"
 DOCS_DIR = os.getenv("DOCS_DIR")
 BATCH_SIZE = int(os.getenv("BATCH_SIZE"))
 MAX_WORKERS = int(os.getenv("MAX_WORKERS"))
@@ -31,73 +30,41 @@ MAX_WORKERS = int(os.getenv("MAX_WORKERS"))
 # Database connection string
 CONNECTION_STRING = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
-# Set up the PostgreSQL database with pgvector extension and required tables
 def setup_database():
+    """Set up PostgreSQL database with pgvector extension"""
     print("📊 Setting up database...")
     start_time = time.time()
     
     engine = create_engine(CONNECTION_STRING)
-    
-    # Vector dimension operations and other database setup in a single transaction where possible
     operations = [
-        # Enable pgvector extension
         "CREATE EXTENSION IF NOT EXISTS vector",
-        
-        # Handle collection table creation
-        """
-        CREATE TABLE IF NOT EXISTS langchain_pg_collection (
-            uuid UUID PRIMARY KEY,
-            name TEXT NOT NULL,
-            cmetadata JSONB
-        )
-        """,
-        
-        # Drop existing index and embedding table to avoid dimension mismatch
-        """
-        DROP INDEX IF EXISTS langchain_pg_embedding_vector_idx;
-        DROP TABLE IF EXISTS langchain_pg_embedding;
-        """,
-        
-        # Create indexes once tables exist
-        """
-        DO $$
+        """CREATE TABLE IF NOT EXISTS langchain_pg_collection (
+            uuid UUID PRIMARY KEY, name TEXT NOT NULL, cmetadata JSONB)""",
+        """DROP INDEX IF EXISTS langchain_pg_embedding_vector_idx;
+           DROP TABLE IF EXISTS langchain_pg_embedding;""",
+        """DO $$
         BEGIN
-            IF EXISTS (
-                SELECT FROM information_schema.tables 
-                WHERE table_schema = 'public' 
-                AND table_name = 'langchain_pg_embedding'
-            ) THEN
-                IF NOT EXISTS (
-                    SELECT 1 FROM pg_indexes
-                    WHERE indexname = 'langchain_pg_embedding_vector_idx'
-                ) THEN
+            IF EXISTS (SELECT FROM information_schema.tables 
+                      WHERE table_schema = 'public' AND table_name = 'langchain_pg_embedding') THEN
+                IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'langchain_pg_embedding_vector_idx') THEN
                     CREATE INDEX langchain_pg_embedding_vector_idx
-                    ON langchain_pg_embedding
-                    USING ivfflat (embedding vector_cosine_ops)
-                    WITH (lists = 100);
+                    ON langchain_pg_embedding USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
                 END IF;
                 
-                IF NOT EXISTS (
-                    SELECT 1 FROM pg_indexes
-                    WHERE indexname = 'langchain_pg_embedding_collection_id_idx'
-                ) THEN
-                    CREATE INDEX langchain_pg_embedding_collection_id_idx
-                    ON langchain_pg_embedding(collection_id);
+                IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'langchain_pg_embedding_collection_id_idx') THEN
+                    CREATE INDEX langchain_pg_embedding_collection_id_idx ON langchain_pg_embedding(collection_id);
                 END IF;
-                
                 ANALYZE langchain_pg_embedding;
             END IF;
-        END $$;
-        """
+        END $$;"""
     ]
     
-    # Execute main operations in a transaction
+    # Execute operations and optimize DB parameters
     with engine.connect() as connection:
         for operation in operations:
             connection.execute(text(operation))
         connection.commit()
     
-    # Set model name as session variable and optimize database parameters
     with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
         try:
             connection.execute(text(f"SET app.embedding_model = '{EMBEDDING_MODEL}'"))
@@ -108,41 +75,11 @@ def setup_database():
     
     print(f"✅ Database setup completed in {time.time() - start_time:.2f}s")
 
-# Create a semantic text splitter or fall back to recursive character splitter
-def create_text_splitter(file_extension=""):
-    print(f"  - Using semantic chunking (similarity threshold: {SEMANTIC_SIMILARITY})")
-    return SemanticTextSplitter(
-        embedding_model=EMBEDDING_MODEL,
-        similarity_threshold=SEMANTIC_SIMILARITY,
-        min_chunk_size=MIN_CHUNK_SIZE,
-        max_chunk_size=MAX_CHUNK_SIZE,
-        chunk_overlap=CHUNK_OVERLAP,
-        respect_structure=RESPECT_STRUCTURE,
-        verbose=True
-    )
-
-# Find all document files to be processed
-def find_documents():
-    if not os.path.exists(DOCS_DIR):
-        print(f"Error: Documents directory '{DOCS_DIR}' not found")
-        return []
-        
-    # Find all supported files in the docs directory
-    print(f"🔍 Searching for documents in '{DOCS_DIR}'...")
-    txt_files = glob.glob(os.path.join(DOCS_DIR, "*.txt"))
-    pdf_files = glob.glob(os.path.join(DOCS_DIR, "*.pdf"))
-    
-    doc_files = txt_files + pdf_files
-    print(f"  - Found {len(txt_files)} text files and {len(pdf_files)} PDF files")
-    
-    return doc_files
-
-# Ensure text starts and ends with complete sentences
 def ensure_complete_sentences(text):
+    """Ensure text starts and ends with complete sentences"""
     if not text or not text.strip():
         return text
         
-    # Pattern to identify sentence boundaries and ending
     sentence_end_pattern = re.compile(r'[.!?][\'"]*\s+')
     sentence_end_final = re.compile(r'[.!?][\'"]*$')
     
@@ -153,24 +90,18 @@ def ensure_complete_sentences(text):
         # Find the last sentence boundary
         match = list(sentence_end_pattern.finditer(text))
         if match:
-            # Get the position of the last sentence terminator
-            last_terminator_pos = match[-1].end()
-            # Return the text up to that position
-            text = text[:last_terminator_pos].strip()
+            text = text[:match[-1].end()].strip()
     
     # Check if text starts with a capital letter
-    # If not, it might be in the middle of a sentence
     if text and not text[0].isupper() and not text[0].isdigit() and not text[0] == '"':
-        # Try to find the next sentence start
         match = re.search(r'[.!?][\'"]*\s+([A-Z0-9])', text)
         if match:
-            # Start from the beginning of the next sentence
             text = text[match.start(1)-1:].strip()
     
     return text
 
-# Process a document file, extract content, and split into chunks
 def process_document(file_path):
+    """Process a document file, extract content, and split into chunks"""
     try:
         start_time = time.time()
         file_name = os.path.basename(file_path)
@@ -182,18 +113,7 @@ def process_document(file_path):
         
         # Load document based on file type
         if file_extension == '.pdf':
-            # Configure PDF loader based on file size
-            max_workers = min(2, os.cpu_count() or 1)
-            batch_size = 10
-            if file_size > 5120:  # 5 MB
-                max_workers = min(4, os.cpu_count() or 1)
-                batch_size = 15
-            if file_size > 10240:  # 10 MB
-                max_workers = min(8, os.cpu_count() or 1)
-                batch_size = 20
-                
-            loader = PDFLoader(file_path, verbose=True, max_workers=max_workers, 
-                              batch_size=batch_size, extract_images=False)
+            loader = PDFLoader(file_path, verbose=True, extract_images=False)
             document = loader.load()
             # Filter empty documents and ensure complete sentences
             document = [doc for doc in document if doc.page_content.strip()]
@@ -224,28 +144,22 @@ def process_document(file_path):
             })
         
         # Split into chunks using semantic text splitter
-        text_splitter = create_text_splitter(file_extension)
-        chunks = text_splitter.split_documents(document)
+        splitter = SemanticTextSplitter(
+            embedding_model=EMBEDDING_MODEL,
+            similarity_threshold=SEMANTIC_SIMILARITY,
+            min_chunk_size=MIN_CHUNK_SIZE,
+            max_chunk_size=MAX_CHUNK_SIZE,
+            chunk_overlap=CHUNK_OVERLAP,
+            respect_structure=RESPECT_STRUCTURE,
+            verbose=True
+        )
+        chunks = splitter.split_documents(document)
         
-        # Filter out header-only chunks
-        header_patterns = [
-            re.compile(r'^(?:CHAPTER|Chapter)\s+[\dIVXLC]+'),
-            re.compile(r'^THE\s+[A-Z\s]+$'),
-            re.compile(r'HARRY POTTER'),
-            re.compile(r'^Page\s+\d+\s+of\s+\d+$'),
-            re.compile(r'^\s*\d+\s*$')
-        ]
-        
+        # Filter out very short chunks
         filtered_chunks = []
         for chunk in chunks:
             # Skip very short chunks
             if len(chunk.page_content.strip()) < MIN_CHUNK_SIZE * 0.1:
-                continue
-                
-            # Skip header-heavy chunks
-            lines = chunk.page_content.strip().split('\n')
-            header_lines = sum(1 for line in lines if any(p.search(line) for p in header_patterns))
-            if lines and header_lines / len(lines) > 0.4:
                 continue
                 
             # Ensure complete sentences
@@ -287,8 +201,8 @@ def process_document(file_path):
         print(f"Detailed error: {traceback.format_exc()}")
         return []
 
-# Process multiple documents using optimized parallel processing
 def process_documents(doc_files):
+    """Process multiple documents in parallel"""
     if not doc_files:
         print("❌ No documents found for processing")
         return []
@@ -297,50 +211,17 @@ def process_documents(doc_files):
     start_time = time.time()
     all_chunks = []
     
-    # Group files by type and size for optimized processing
-    file_groups = {
-        'text': sorted([f for f in doc_files if f.lower().endswith('.txt')], key=os.path.getsize),
-        'pdf_small': [f for f in doc_files if f.lower().endswith('.pdf') and os.path.getsize(f) < 2 * 1024 * 1024],
-        'pdf_medium': [f for f in doc_files if f.lower().endswith('.pdf') and 2 * 1024 * 1024 <= os.path.getsize(f) < 10 * 1024 * 1024],
-        'pdf_large': [f for f in doc_files if f.lower().endswith('.pdf') and os.path.getsize(f) >= 10 * 1024 * 1024]
-    }
+    # Process all files in parallel using ThreadPoolExecutor
+    with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        chunks_list = list(executor.map(process_document, doc_files))
+        for chunks in chunks_list:
+            all_chunks.extend(chunks if chunks else [])
     
-    # Process file groups with appropriate parallelism
-    processing_config = [
-        ('text', file_groups['text'], MAX_WORKERS),
-        ('small PDF', file_groups['pdf_small'], min(len(file_groups['pdf_small']), MAX_WORKERS // 2)),
-        ('medium PDF', file_groups['pdf_medium'], 2),
-    ]
-    
-    # Process text and PDF files with appropriate parallelism
-    for group_name, files, max_workers in processing_config:
-        if files:
-            print(f"📄 Processing {len(files)} {group_name} files...")
-            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-                chunks_list = list(executor.map(process_document, files))
-                for chunks in chunks_list:
-                    all_chunks.extend(chunks if chunks else [])
-    
-    # Process large PDFs sequentially to avoid memory issues
-    if file_groups['pdf_large']:
-        print(f"📄 Processing {len(file_groups['pdf_large'])} large PDF files sequentially...")
-        for pdf_file in file_groups['pdf_large']:
-            import gc
-            gc.collect()  # Force garbage collection before processing large PDF
-            
-            print(f"  - Processing large PDF: {os.path.basename(pdf_file)} ({os.path.getsize(pdf_file) / (1024 * 1024):.1f} MB)")
-            chunks = process_document(pdf_file)
-            if chunks:
-                all_chunks.extend(chunks)
-            gc.collect()  # Force garbage collection after processing
-    
-    total_time = time.time() - start_time
-    print(f"✅ Document processing {'completed' if all_chunks else 'failed'}: {'generated ' + str(len(all_chunks)) + ' chunks' if all_chunks else 'No chunks were generated'} in {total_time:.2f}s")
-    
+    print(f"✅ Document processing: generated {len(all_chunks)} chunks in {time.time() - start_time:.2f}s")
     return all_chunks
 
-# Store chunks in the vector database with batching
 def store_chunks_in_db(chunks, embeddings):
+    """Store chunks in the vector database with batching"""
     if not chunks:
         print("No chunks to store.")
         return
@@ -370,14 +251,21 @@ def store_chunks_in_db(chunks, embeddings):
     
     print(f"✅ All chunks stored in {time.time() - start_time:.2f}s")
 
-# Main function to run the ingestion pipeline
 def run_pipeline():
+    """Main function to run the ingestion pipeline"""
     print("\n" + "=" * 50 + "\n📚 Starting document ingestion pipeline\n" + "=" * 50 + "\n")
     pipeline_start = time.time()
     
     # Setup database and find documents
     setup_database()
-    doc_files = find_documents()
+    
+    # Find document files
+    if not os.path.exists(DOCS_DIR):
+        print(f"Error: Documents directory '{DOCS_DIR}' not found")
+        return
+    
+    doc_files = glob.glob(os.path.join(DOCS_DIR, "*.txt")) + glob.glob(os.path.join(DOCS_DIR, "*.pdf"))
+    print(f"🔍 Found {len(doc_files)} documents in '{DOCS_DIR}'")
     
     if not doc_files:
         print("❌ No documents found for processing. Add files to the Documents directory.")
@@ -390,7 +278,7 @@ def run_pipeline():
         print("❌ No chunks were generated. Check your documents and processing settings.")
         return
     
-    # Print content verification stats
+    # Print chunk statistics
     doc_counts = {}
     for chunk in all_chunks:
         source = chunk.metadata.get("file_name", "unknown")
