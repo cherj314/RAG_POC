@@ -31,9 +31,8 @@ MAX_WORKERS = int(os.getenv("MAX_WORKERS"))
 # Database connection string
 CONNECTION_STRING = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
-# Set up the PostgreSQL database with pgvector extension and optimizations
+# Set up the PostgreSQL database with pgvector extension and required tables
 def setup_database():
-    """Set up the PostgreSQL database with pgvector extension and required tables."""
     print("📊 Setting up database...")
     start_time = time.time()
     
@@ -138,9 +137,8 @@ def find_documents():
     
     return doc_files
 
-# Ensure text has complete sentences
+# Ensure text starts and ends with complete sentences
 def ensure_complete_sentences(text):
-    """Ensure text starts and ends with complete sentences."""
     if not text or not text.strip():
         return text
         
@@ -171,7 +169,7 @@ def ensure_complete_sentences(text):
     
     return text
 
-# Update the process_document function in ingest.py
+# Process a document file, extract content, and split into chunks
 def process_document(file_path):
     try:
         start_time = time.time()
@@ -182,267 +180,165 @@ def process_document(file_path):
         
         print(f"\n📄 Processing {file_name} ({file_size:.1f} KB)...")
         
-        # Store original file content for verification (only for text files)
-        original_content = ""
-        try:
-            if file_extension.lower() != '.pdf':
-                with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
-                    original_content = f.read()
-        except Exception as e:
-            print(f"  - Note: Could not read original file for verification: {str(e)}")
-        
-        # Load the document based on file type with optimized settings
+        # Load document based on file type
         if file_extension == '.pdf':
-            # Use optimized settings based on file size
-            if file_size > 10240:  # 10 MB
-                # For large PDFs: more parallelism, larger batches
-                max_workers = min(os.cpu_count() or 1, 8)  # Up to 8 workers
-                batch_size = 20
-            elif file_size > 5120:  # 5 MB
-                max_workers = min(os.cpu_count() or 1, 4)  # Up to 4 workers
+            # Configure PDF loader based on file size
+            max_workers = min(2, os.cpu_count() or 1)
+            batch_size = 10
+            if file_size > 5120:  # 5 MB
+                max_workers = min(4, os.cpu_count() or 1)
                 batch_size = 15
-            else:
-                # Small PDFs: less parallelism to reduce overhead
-                max_workers = 2
-                batch_size = 10
+            if file_size > 10240:  # 10 MB
+                max_workers = min(8, os.cpu_count() or 1)
+                batch_size = 20
                 
-            loader = PDFLoader(
-                file_path, 
-                verbose=True,
-                max_workers=max_workers,
-                batch_size=batch_size,
-                extract_images=False  # Don't extract image info for better performance
-            )
+            loader = PDFLoader(file_path, verbose=True, max_workers=max_workers, 
+                              batch_size=batch_size, extract_images=False)
             document = loader.load()
-            
-            # Filter empty documents
-            clean_document = []
+            # Filter empty documents and ensure complete sentences
+            document = [doc for doc in document if doc.page_content.strip()]
             for doc in document:
-                if doc.page_content and doc.page_content.strip():
-                    # Ensure each document has complete sentences
-                    doc.page_content = ensure_complete_sentences(doc.page_content)
-                    clean_document.append(doc)
-                else:
-                    print(f"  - Skipping empty document segment")
-            
-            document = clean_document
+                doc.page_content = ensure_complete_sentences(doc.page_content)
         else:
-            # For text files, just create a document with the original content
+            # For text files, read content and create a single document
             with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
-                original_content = f.read()
-                
+                content = f.read()
             document = [Document(
-                page_content=ensure_complete_sentences(original_content),
-                metadata={
-                    "source": file_path,
-                    "file_name": file_name,
-                    "file_id": file_id,
-                    "file_extension": file_extension,
-                }
+                page_content=ensure_complete_sentences(content),
+                metadata={"source": file_path, "file_name": file_name, 
+                         "file_id": file_id, "file_extension": file_extension}
             )]
         
         if not document:
-            print(f"❌ Failed to extract any content from {file_name}")
-            
-            # Last resort for non-PDF files: create a single document with the whole file
-            if original_content and file_extension.lower() != '.pdf':
-                print(f"  - Creating emergency document with entire file content")
-                document = [Document(
-                    page_content=ensure_complete_sentences(original_content),
-                    metadata={
-                        "source": file_path,
-                        "file_name": file_name,
-                        "file_id": file_id,
-                        "file_extension": file_extension,
-                        "extraction_method": "emergency_fallback"
-                    }
-                )]
-            else:
-                return []
+            print(f"❌ No content extracted from {file_name}")
+            return []
             
         print(f"  - Extracted {len(document)} document segments")
         
-        # Add metadata to each document
+        # Update metadata for all documents
         for doc in document:
-            if not doc.metadata.get("file_name"):
-                doc.metadata["file_name"] = file_name
-            if not doc.metadata.get("file_id"):
-                doc.metadata["file_id"] = file_id
-            doc.metadata["file_extension"] = file_extension
+            doc.metadata.update({
+                "file_name": file_name,
+                "file_id": file_id,
+                "file_extension": file_extension
+            })
         
-        # Create text splitter (enhanced semantic or fixed-size)
+        # Split into chunks using semantic text splitter
         text_splitter = create_text_splitter(file_extension)
+        chunks = text_splitter.split_documents(document)
         
-        # Split document into chunks
-        try:
-            chunks = text_splitter.split_documents(document)
-
-            # Additional filter to remove any chunks that are just headers, page numbers, etc.
-            # (very short chunks, or chunks that match our header patterns)
-            filtered_chunks = []
-            header_patterns = [
-                re.compile(r'^(?:CHAPTER|Chapter)\s+[\dIVXLC]+'),
-                re.compile(r'^THE\s+[A-Z\s]+$'),
-                re.compile(r'HARRY POTTER'),
-                re.compile(r'^Page\s+\d+\s+of\s+\d+$')
-            ]
-            page_number_pattern = re.compile(r'^\s*\d+\s*$')
-            
-            for chunk in chunks:
-                chunk_content = chunk.page_content.strip()
+        # Filter out header-only chunks
+        header_patterns = [
+            re.compile(r'^(?:CHAPTER|Chapter)\s+[\dIVXLC]+'),
+            re.compile(r'^THE\s+[A-Z\s]+$'),
+            re.compile(r'HARRY POTTER'),
+            re.compile(r'^Page\s+\d+\s+of\s+\d+$'),
+            re.compile(r'^\s*\d+\s*$')
+        ]
+        
+        filtered_chunks = []
+        for chunk in chunks:
+            # Skip very short chunks
+            if len(chunk.page_content.strip()) < MIN_CHUNK_SIZE * 0.1:
+                continue
                 
-                # Skip very short chunks (likely just headers or page numbers)
-                if len(chunk_content) < MIN_CHUNK_SIZE * 0.1:
-                    print(f"  - Filtering out short chunk ({len(chunk_content)} chars)")
-                    continue
+            # Skip header-heavy chunks
+            lines = chunk.page_content.strip().split('\n')
+            header_lines = sum(1 for line in lines if any(p.search(line) for p in header_patterns))
+            if lines and header_lines / len(lines) > 0.4:
+                continue
                 
-                # Check if chunk is predominantly headers or page numbers
-                lines = chunk_content.split('\n')
-                header_line_count = 0
-                
-                for line in lines:
-                    is_header = False
-                    if page_number_pattern.match(line):
-                        is_header = True
-                    else:
-                        for pattern in header_patterns:
-                            if pattern.search(line):
-                                is_header = True
-                                break
-                    
-                    if is_header:
-                        header_line_count += 1
-                
-                # If more than 40% of lines are headers, skip this chunk
-                if lines and header_line_count / len(lines) > 0.4:
-                    print(f"  - Filtering out header-heavy chunk ({header_line_count}/{len(lines)} lines)")
-                    continue
-                
-                # Ensure each chunk has complete sentences
-                chunk.page_content = ensure_complete_sentences(chunk.page_content)
-                filtered_chunks.append(chunk)
+            # Ensure complete sentences
+            chunk.page_content = ensure_complete_sentences(chunk.page_content)
+            filtered_chunks.append(chunk)
+        
+        chunks = filtered_chunks
+        
+        # For text files, check content coverage and add full document if needed
+        if file_extension != '.pdf' and document[0].page_content:
+            original_content = document[0].page_content
+            chunks_content = " ".join(chunk.page_content for chunk in chunks)
             
-            chunks = filtered_chunks
+            # Normalize whitespace for comparison
+            norm_chunks = re.sub(r'\s+', ' ', chunks_content).strip()
+            norm_original = re.sub(r'\s+', ' ', original_content).strip()
             
-            # Verify chunk content covers the entire original document
-            if chunks:
-                # Check chunk coverage for text files (PDFs are harder to verify)
-                if original_content and file_extension.lower() != '.pdf':
-                    total_chunks_content = " ".join([chunk.page_content for chunk in chunks])
-                    
-                    # Normalize whitespace for comparison
-                    chunks_content = re.sub(r'\s+', ' ', total_chunks_content).strip()
-                    original_normalized = re.sub(r'\s+', ' ', original_content).strip()
-                    
-                    # Calculate content coverage
-                    coverage_ratio = len(chunks_content) / len(original_normalized) if len(original_normalized) > 0 else 0
-                    print(f"  - Content coverage: {coverage_ratio:.2f} ({len(chunks_content)} / {len(original_normalized)} chars)")
-                    
-                    # If we've lost significant content, fall back to a single chunk with the entire document
-                    if coverage_ratio < 0.9 and len(original_normalized) > 0:
-                        print(f"  - Warning: Content coverage below 90%, adding full document as an additional chunk")
-                        chunks.append(Document(
-                            page_content=ensure_complete_sentences(original_content),
-                            metadata={
-                                "source": file_path,
-                                "file_name": file_name,
-                                "file_id": file_id,
-                                "file_extension": file_extension,
-                                "chunk": len(chunks),
-                                "total_chunks": len(chunks) + 1,
-                                "is_full_document": True
-                            }
-                        ))
+            # If coverage below 90%, add full document as additional chunk
+            if norm_original and len(norm_chunks) / len(norm_original) < 0.9:
+                print(f"  - Warning: Low content coverage, adding full document as chunk")
+                chunks.append(Document(
+                    page_content=ensure_complete_sentences(original_content),
+                    metadata={
+                        "source": file_path, "file_name": file_name, "file_id": file_id,
+                        "file_extension": file_extension, "is_full_document": True
+                    }
+                ))
+        
+        # If no chunks created, use original documents
+        if not chunks and document:
+            print(f"  - Warning: No chunks created, using document segments")
+            chunks = document
             
-            proc_time = time.time() - start_time
-            print(f"✅ {file_name}: Created {len(chunks)} chunks in {proc_time:.2f}s")
-            
-            # If we somehow ended up with no chunks, use the original documents as chunks
-            if not chunks and document:
-                print(f"  - Warning: No chunks created, using document segments as chunks")
-                chunks = document
-            
-            return chunks
-        except Exception as e:
-            print(f"❌ Error splitting document {file_name}: {str(e)}")
-            print(f"Detailed error: {traceback.format_exc()}")
-            
+        print(f"✅ {file_name}: Created {len(chunks)} chunks in {time.time() - start_time:.2f}s")
+        return chunks
+        
     except Exception as e:
         print(f"❌ Error processing {file_path}: {str(e)}")
         print(f"Detailed error: {traceback.format_exc()}")
+        return []
 
 # Process multiple documents using optimized parallel processing
 def process_documents(doc_files):
-    all_chunks = []
-    
     if not doc_files:
         print("❌ No documents found for processing")
-        return all_chunks
+        return []
         
     print(f"🚀 Processing {len(doc_files)} documents...")
     start_time = time.time()
+    all_chunks = []
     
-    # Sort files by type and size for better processing
-    text_files = sorted([f for f in doc_files if f.lower().endswith('.txt')], 
-                        key=os.path.getsize)
+    # Group files by type and size for optimized processing
+    file_groups = {
+        'text': sorted([f for f in doc_files if f.lower().endswith('.txt')], key=os.path.getsize),
+        'pdf_small': [f for f in doc_files if f.lower().endswith('.pdf') and os.path.getsize(f) < 2 * 1024 * 1024],
+        'pdf_medium': [f for f in doc_files if f.lower().endswith('.pdf') and 2 * 1024 * 1024 <= os.path.getsize(f) < 10 * 1024 * 1024],
+        'pdf_large': [f for f in doc_files if f.lower().endswith('.pdf') and os.path.getsize(f) >= 10 * 1024 * 1024]
+    }
     
-    # For PDFs, sort by size but also partition into size groups for optimal processing
-    pdf_files = sorted([f for f in doc_files if f.lower().endswith('.pdf')], 
-                      key=os.path.getsize)
+    # Process file groups with appropriate parallelism
+    processing_config = [
+        ('text', file_groups['text'], MAX_WORKERS),
+        ('small PDF', file_groups['pdf_small'], min(len(file_groups['pdf_small']), MAX_WORKERS // 2)),
+        ('medium PDF', file_groups['pdf_medium'], 2),
+    ]
     
-    # Separate PDFs into small, medium and large for optimized handling
-    small_pdfs = [f for f in pdf_files if os.path.getsize(f) < 2 * 1024 * 1024]  # < 2MB
-    medium_pdfs = [f for f in pdf_files if 2 * 1024 * 1024 <= os.path.getsize(f) < 10 * 1024 * 1024]  # 2-10MB
-    large_pdfs = [f for f in pdf_files if os.path.getsize(f) >= 10 * 1024 * 1024]  # > 10MB
+    # Process text and PDF files with appropriate parallelism
+    for group_name, files, max_workers in processing_config:
+        if files:
+            print(f"📄 Processing {len(files)} {group_name} files...")
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                chunks_list = list(executor.map(process_document, files))
+                for chunks in chunks_list:
+                    all_chunks.extend(chunks if chunks else [])
     
-    # Process text files in parallel
-    if text_files:
-        print(f"📝 Processing {len(text_files)} text files...")
-        with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            chunks_list = list(executor.map(process_document, text_files))
-            for chunks in chunks_list:
-                all_chunks.extend(chunks if chunks else [])
-    
-    # Process small PDFs in parallel (they're small enough to handle concurrently)
-    if small_pdfs:
-        print(f"📄 Processing {len(small_pdfs)} small PDF files in parallel...")
-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(small_pdfs), MAX_WORKERS // 2)) as executor:
-            chunks_list = list(executor.map(process_document, small_pdfs))
-            for chunks in chunks_list:
-                all_chunks.extend(chunks if chunks else [])
-    
-    # Process medium PDFs with limited parallelism to avoid memory issues
-    if medium_pdfs:
-        print(f"📄 Processing {len(medium_pdfs)} medium-sized PDF files with limited parallelism...")
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-            chunks_list = list(executor.map(process_document, medium_pdfs))
-            for chunks in chunks_list:
-                all_chunks.extend(chunks if chunks else [])
-    
-    # Process large PDFs one at a time to avoid memory issues
-    if large_pdfs:
-        print(f"📄 Processing {len(large_pdfs)} large PDF files sequentially...")
-        for pdf_file in large_pdfs:
-            # Force garbage collection before processing large PDF
+    # Process large PDFs sequentially to avoid memory issues
+    if file_groups['pdf_large']:
+        print(f"📄 Processing {len(file_groups['pdf_large'])} large PDF files sequentially...")
+        for pdf_file in file_groups['pdf_large']:
             import gc
-            gc.collect()
+            gc.collect()  # Force garbage collection before processing large PDF
             
             print(f"  - Processing large PDF: {os.path.basename(pdf_file)} ({os.path.getsize(pdf_file) / (1024 * 1024):.1f} MB)")
             chunks = process_document(pdf_file)
             if chunks:
                 all_chunks.extend(chunks)
-                
-            # Force garbage collection after processing large PDF
-            gc.collect()
+            gc.collect()  # Force garbage collection after processing
     
     total_time = time.time() - start_time
-    if all_chunks:
-        print(f"✅ Document processing completed: generated {len(all_chunks)} chunks in {total_time:.2f}s")
-    else:
-        print("❌ No chunks were generated from documents")
+    print(f"✅ Document processing {'completed' if all_chunks else 'failed'}: {'generated ' + str(len(all_chunks)) + ' chunks' if all_chunks else 'No chunks were generated'} in {total_time:.2f}s")
     
     return all_chunks
-        
+
 # Store chunks in the vector database with batching
 def store_chunks_in_db(chunks, embeddings):
     if not chunks:
@@ -452,20 +348,15 @@ def store_chunks_in_db(chunks, embeddings):
     print(f"💾 Storing {len(chunks)} chunks in vector database...")
     start_time = time.time()
     
-    # Final check to ensure all chunks start and end with complete sentences
+    # Ensure all chunks start and end with complete sentences
     for i, chunk in enumerate(chunks):
         chunks[i].page_content = ensure_complete_sentences(chunk.page_content)
     
-    # Split chunks into batches
+    # Split chunks into batches and store each batch
     batches = [chunks[i:i + BATCH_SIZE] for i in range(0, len(chunks), BATCH_SIZE)]
     
-    # Store each batch
     for i, batch in enumerate(batches, 1):
-        batch_start = time.time()
-        print(f"  - Storing batch {i}/{len(batches)} ({len(batch)} chunks)...")
-        
         try:
-            # Initialize PGVector with embeddings model and connection details
             PGVector.from_documents(
                 documents=batch,
                 embedding=embeddings,
@@ -473,82 +364,61 @@ def store_chunks_in_db(chunks, embeddings):
                 connection_string=CONNECTION_STRING,
                 pre_delete_collection=(i == 1)  # Only delete on first batch
             )
-            
-            batch_time = time.time() - batch_start
-            print(f"    ✅ Batch {i}/{len(batches)} stored in {batch_time:.2f}s")
+            print(f"  ✅ Batch {i}/{len(batches)} stored")
         except Exception as e:
-            print(f"    ❌ Error storing batch {i}: {e}")
-            print(f"    Detailed error: {traceback.format_exc()}")
+            print(f"  ❌ Error storing batch {i}: {e}")
     
-    total_time = time.time() - start_time
-    print(f"✅ All chunks stored in {total_time:.2f}s")
+    print(f"✅ All chunks stored in {time.time() - start_time:.2f}s")
 
 # Main function to run the ingestion pipeline
 def run_pipeline():
-    print("\n" + "=" * 50)
-    print("📚 Starting document ingestion pipeline")
-    print("=" * 50 + "\n")
-    
+    print("\n" + "=" * 50 + "\n📚 Starting document ingestion pipeline\n" + "=" * 50 + "\n")
     pipeline_start = time.time()
     
-    # Setup database
+    # Setup database and find documents
     setup_database()
-    
-    # Find all documents to process
     doc_files = find_documents()
     
     if not doc_files:
         print("❌ No documents found for processing. Add files to the Documents directory.")
         return
     
-    # Process documents
+    # Process documents and generate chunks
     all_chunks = process_documents(doc_files)
     
     if not all_chunks:
         print("❌ No chunks were generated. Check your documents and processing settings.")
         return
     
-    # Content verification stats
-    print("\n📊 Content verification:")
-    print(f"  - Total documents processed: {len(doc_files)}")
-    print(f"  - Total chunks generated: {len(all_chunks)}")
-    
-    # Analyze chunks by document source
-    docs_by_source = {}
+    # Print content verification stats
+    doc_counts = {}
     for chunk in all_chunks:
         source = chunk.metadata.get("file_name", "unknown")
-        if source not in docs_by_source:
-            docs_by_source[source] = []
-        docs_by_source[source].append(chunk)
+        doc_counts[source] = doc_counts.get(source, 0) + 1
     
+    print(f"\n📊 Content verification:\n  - Total documents: {len(doc_files)}\n  - Total chunks: {len(all_chunks)}")
     print("\n📑 Chunks by document:")
-    for source, chunks in docs_by_source.items():
-        print(f"  - {source}: {len(chunks)} chunks")
+    for source, count in doc_counts.items():
+        print(f"  - {source}: {count} chunks")
         
-        # Check for emergency fallbacks
-        emergency_chunks = [c for c in chunks if c.metadata.get("is_emergency_fallback") or 
-                           c.metadata.get("is_direct_file_fallback") or
-                           c.metadata.get("extraction_method") == "emergency_fallback"]
-        if emergency_chunks:
+        # Check for emergency fallbacks in any chunk for this source
+        if any(c.metadata.get("is_emergency_fallback") or 
+               c.metadata.get("is_direct_file_fallback") or
+               c.metadata.get("extraction_method") == "emergency_fallback" 
+               for c in all_chunks if c.metadata.get("file_name") == source):
             print(f"    ⚠️ Used emergency fallback for this document")
     
-    # Initialize embedding model
+    # Initialize embedding model and store chunks
     print(f"\n🧠 Initializing embedding model: {EMBEDDING_MODEL}")
-    model_start = time.time()
     try:
         embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
-        print(f"✅ Model initialized in {time.time() - model_start:.2f}s")
+        store_chunks_in_db(all_chunks, embeddings)
     except Exception as e:
         print(f"❌ Error initializing embedding model: {str(e)}")
         print(f"Detailed error: {traceback.format_exc()}")
         return
     
-    # Store chunks in vector database
-    store_chunks_in_db(all_chunks, embeddings)
-    
-    total_time = time.time() - pipeline_start
-    print(f"\n⏱️ Total ingestion time: {total_time:.2f} seconds")
-    print("=" * 50)
+    print(f"\n⏱️ Total ingestion time: {time.time() - pipeline_start:.2f} seconds\n" + "=" * 50)
 
 if __name__ == "__main__":
     # Add retry logic for container environments
