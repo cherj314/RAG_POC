@@ -46,6 +46,18 @@ def setup_database():
         BEGIN
             IF EXISTS (SELECT FROM information_schema.tables 
                       WHERE table_schema = 'public' AND table_name = 'langchain_pg_embedding') THEN
+                -- Check if we need to convert cmetadata from JSON to JSONB
+                IF EXISTS (SELECT FROM information_schema.columns 
+                          WHERE table_schema = 'public' 
+                          AND table_name = 'langchain_pg_embedding'
+                          AND column_name = 'cmetadata'
+                          AND data_type = 'json') THEN
+                    ALTER TABLE langchain_pg_embedding 
+                    ALTER COLUMN cmetadata TYPE JSONB USING cmetadata::JSONB;
+                    RAISE NOTICE 'Converted cmetadata column from JSON to JSONB';
+                END IF;
+                
+                -- Create indices if they don't exist
                 IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'langchain_pg_embedding_vector_idx') THEN
                     CREATE INDEX langchain_pg_embedding_vector_idx
                     ON langchain_pg_embedding USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
@@ -54,6 +66,12 @@ def setup_database():
                 IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'langchain_pg_embedding_collection_id_idx') THEN
                     CREATE INDEX langchain_pg_embedding_collection_id_idx ON langchain_pg_embedding(collection_id);
                 END IF;
+                
+                -- Create index on cmetadata for faster JSON path operations
+                IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'langchain_pg_embedding_cmetadata_idx') THEN
+                    CREATE INDEX langchain_pg_embedding_cmetadata_idx ON langchain_pg_embedding USING GIN (cmetadata);
+                END IF;
+                
                 ANALYZE langchain_pg_embedding;
             END IF;
         END $$;"""
@@ -243,7 +261,8 @@ def store_chunks_in_db(chunks, embeddings):
                 embedding=embeddings,
                 collection_name=COLLECTION_NAME,
                 connection_string=CONNECTION_STRING,
-                pre_delete_collection=(i == 1)  # Only delete on first batch
+                pre_delete_collection=(i == 1),  # Only delete on first batch
+                use_jsonb=True  # Use JSONB for metadata to fix the deprecation warning
             )
             print(f"  ✅ Batch {i}/{len(batches)} stored")
         except Exception as e:
