@@ -5,18 +5,11 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
 from pdf_loader import PDFLoader
-
-# Import our custom semantic text splitter
-try:
-    from semantic_text_splitter import SemanticTextSplitter
-except ImportError:
-    print("⚠️ Could not import SemanticTextSplitter, falling back to RecursiveCharacterTextSplitter")
-    SemanticTextSplitter = None
+from semantic_text_splitter import SemanticTextSplitter
 
 # Load environment variables
 load_dotenv()
 
-# Environment variables with defaults
 DB_HOST = os.getenv("DB_HOST")
 DB_PORT = int(os.getenv("DB_PORT"))
 DB_NAME = os.getenv("POSTGRES_DB")
@@ -25,14 +18,12 @@ DB_PASSWORD = os.getenv("POSTGRES_PASSWORD")
 COLLECTION_NAME = os.getenv("COLLECTION_NAME")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL")
 
-# Chunking configuration
 MIN_CHUNK_SIZE = int(os.getenv("MIN_CHUNK_SIZE", "200"))
 MAX_CHUNK_SIZE = int(os.getenv("MAX_CHUNK_SIZE", "800"))
-CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "200"))  # Default to 200 if not set
+CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "200"))  
 SEMANTIC_SIMILARITY = float(os.getenv("SEMANTIC_SIMILARITY", "0.6"))
 RESPECT_STRUCTURE = os.getenv("RESPECT_STRUCTURE", "true").lower()
 
-# Processing parameters
 DOCS_DIR = os.getenv("DOCS_DIR")
 BATCH_SIZE = int(os.getenv("BATCH_SIZE"))
 MAX_WORKERS = int(os.getenv("MAX_WORKERS"))
@@ -203,30 +194,16 @@ def setup_database():
 
 # Create a semantic text splitter or fall back to recursive character splitter
 def create_text_splitter(file_extension=""):
-    try:
-        print(f"  - Using semantic chunking (similarity threshold: {SEMANTIC_SIMILARITY})")
-        return SemanticTextSplitter(
-            embedding_model=EMBEDDING_MODEL,
-            similarity_threshold=SEMANTIC_SIMILARITY,
-            min_chunk_size=MIN_CHUNK_SIZE,
-            max_chunk_size=MAX_CHUNK_SIZE,
-            chunk_overlap=CHUNK_OVERLAP,
-            respect_structure=RESPECT_STRUCTURE,
-            verbose=True
-        )
-    except Exception as e:
-        print(f"⚠️ Error initializing semantic chunker: {str(e)}")
-        
-        # Emergency fallback - create a minimal version
-        print(f"  - Using emergency fallback chunker")
-        from langchain.text_splitter import RecursiveCharacterTextSplitter
-        
-        # Use separators that respect sentence boundaries
-        return RecursiveCharacterTextSplitter(
-            chunk_size=800,
-            chunk_overlap=200,
-            separators=["\n\n", "\n", ". ", "! ", "? ", ";", ":", " ", ""]
-        )
+    print(f"  - Using semantic chunking (similarity threshold: {SEMANTIC_SIMILARITY})")
+    return SemanticTextSplitter(
+        embedding_model=EMBEDDING_MODEL,
+        similarity_threshold=SEMANTIC_SIMILARITY,
+        min_chunk_size=MIN_CHUNK_SIZE,
+        max_chunk_size=MAX_CHUNK_SIZE,
+        chunk_overlap=CHUNK_OVERLAP,
+        respect_structure=RESPECT_STRUCTURE,
+        verbose=True
+    )
 
 # Find all document files to be processed
 def find_documents():
