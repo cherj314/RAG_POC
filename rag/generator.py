@@ -6,12 +6,12 @@ import openai
 load_dotenv()
 openai.api_key = os.getenv("OPENAI_API_KEY")
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "tinyllama")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3:instruct")
 
 # Generate a response using either OpenAI or Ollama models
 def generate_response(prompt, max_tokens=2048, model_type=None, model=None, temperature=0.3, preserve_formatting=True):
     model_type = model_type or os.getenv("DEFAULT_MODEL_TYPE", "openai").lower()
-    model = model or (os.getenv("OPENAI_MODEL", "gpt-4o") if model_type == "openai" else os.getenv("OLLAMA_MODEL", "tinyllama"))
+    model = model or (os.getenv("OPENAI_MODEL", "gpt-4o") if model_type == "openai" else os.getenv("OLLAMA_MODEL", "llama3:instruct"))
     
     # System message for Harry Potter context
     system_message = "You are an expert on Harry Potter books with comprehensive knowledge of the series. Answer the question based EXCLUSIVELY on the provided passages from the books. For each statement in your answer, cite the specific passage number in brackets, like [PASSAGE 2]. If the information isn't in the provided passages, admit this clearly instead of making up information. If directly quoting the text, use quotation marks and cite the passage. Your answers should be comprehensive yet concise, focusing on directly addressing the question with evidence from the text."
@@ -124,7 +124,7 @@ def get_available_models():
     """Get the list of available models for OpenAI and Ollama"""
     models = {
         "openai": ["gpt-4o"],
-        "ollama": ["tinyllama"]
+        "ollama": ["llama3:instruct"]
     }
     
     try:
