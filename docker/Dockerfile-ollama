@@ -1,7 +1,8 @@
+# Official Ollama image
 FROM ollama/ollama:latest
 
 # Set environment variables
-ENV MODEL_NAME=${OLLAMA_MODEL:-tinyllama}
+ENV MODEL_NAME=${OLLAMA_MODEL:-llama3:instruct}
 
 # Install necessary tools
 USER root

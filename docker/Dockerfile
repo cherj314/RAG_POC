@@ -1,6 +1,7 @@
+# Official PostgreSQL image with pgvector extension installed
 FROM postgres:latest
 
-# Install necessary dependencies for building the extension in a single layer
+# Install necessary dependencies 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     postgresql-server-dev-$PG_MAJOR \

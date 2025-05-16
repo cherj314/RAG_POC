@@ -1,307 +1,225 @@
-import os, nltk, torch, re, numpy as np
-from typing import List, Optional
-from langchain.text_splitter import TextSplitter
+import re
+from typing import List
 from langchain.docstore.document import Document
+from langchain.text_splitter import TextSplitter
 from sentence_transformers import SentenceTransformer
+import numpy as np
 
-# Define and set up NLTK data directory
-nltk_data_dir = os.getenv('NLTK_DATA', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'nltk_data'))
-os.makedirs(nltk_data_dir, exist_ok=True)
-nltk.data.path.insert(0, nltk_data_dir)
-
-# Try to download the correct NLTK data
-try:
-    # First check for punkt (the standard tokenizer)
-    try:
-        nltk.data.find('tokenizers/punkt')
-        print("NLTK punkt tokenizer already downloaded.")
-    except LookupError:
-        print(f"Downloading NLTK punkt tokenizer to {nltk_data_dir}...")
-        nltk.download('punkt', download_dir=nltk_data_dir, quiet=False)
-    
-    # Now specifically try to handle punkt_tab
-    try:
-        nltk.data.find('tokenizers/punkt_tab')
-    except LookupError:
-        print(f"Attempting to ensure punkt_tab is available...")
-        # Standard punkt should include punkt_tab, but we'll make sure the punkt download was successful
-        if os.path.exists(os.path.join(nltk_data_dir, 'tokenizers', 'punkt')):
-            print("punkt tokenizer is available, which should contain punkt_tab")
-except Exception as e:
-    print(f"Warning: Error setting up NLTK: {str(e)}")
-    print("Proceeding with fallback sentence splitting.")
-
-# A text splitter that creates chunks based on semantic similarity while ensuring chunks respect sentence boundaries.  
+# Text splitter that creates chunks based on semantic similarity
 class SemanticTextSplitter(TextSplitter):
     
     def __init__(
         self,
-        embedding_model: str = "sentence-transformers/all-mpnet-base-v2",
+        embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2",
         similarity_threshold: float = 0.6,
         min_chunk_size: int = 200,
-        max_chunk_size: int = 800,
-        chunk_overlap: int = 200,  # Increased from 100
+        max_chunk_size: int = 3000,
+        chunk_overlap: int = 200,
         respect_structure: bool = True,
         verbose: bool = False
     ):
-        super().__init__(
-            chunk_size=max_chunk_size,
-            chunk_overlap=chunk_overlap
-        )
-        
+        super().__init__(chunk_size=max_chunk_size, chunk_overlap=chunk_overlap)
         self.similarity_threshold = similarity_threshold
         self.min_chunk_size = min_chunk_size
         self.max_chunk_size = max_chunk_size
         self.chunk_overlap = chunk_overlap
         self.respect_structure = respect_structure
         self.verbose = verbose
+        self.embedding_model = None
         
-        # Initialize the embedding model
-        self._log(f"Initializing embedding model: {embedding_model}")
-        try:
-            device = 'cuda' if torch.cuda.is_available() else 'cpu'
-            self._log(f"Using device: {device}")
-            self.embedding_model = SentenceTransformer(embedding_model, device=device)
-        except Exception as e:
-            self._log(f"Error initializing model with device detection: {str(e)}")
-            self._log("Falling back to basic model initialization")
-            self.embedding_model = SentenceTransformer(embedding_model)
-        
-        # Compile structural patterns
-        self.chapter_pattern = re.compile(r'^(?:CHAPTER|Chapter)\s+[A-Z0-9]+(?:\s+[A-Z].*)?$', re.MULTILINE)
-        self.scene_break_pattern = re.compile(r'^[\s*#_\-]{3,}$', re.MULTILINE)
-        self.page_number_pattern = re.compile(r'^\d+$', re.MULTILINE)
-        self.book_title_pattern = re.compile(r'^HARRY POTTER.*$', re.MULTILINE)
+        # Structural element patterns
+        self.patterns = {
+            'chapter': re.compile(r'^(?:CHAPTER|Chapter)\s+[IVXLCDM\d]+', re.MULTILINE),
+            'scene_break': re.compile(r'^[\s*#_\-]{3,}$', re.MULTILINE),
+            'page_number': re.compile(r'^\s*\d+\s*$', re.MULTILINE),
+            'header': re.compile(r'HARRY POTTER|^THE\s+[A-Z\s]+$', re.MULTILINE),
+            'sentence_end': re.compile(r'[.!?][\'\"]?\s+')
+        }
     
-
     def _log(self, message: str) -> None:
         if self.verbose:
-            print(f"[SemanticTextSplitter] {message}")
+            print(f"[SemanticSplitter] {message}")
     
-    # Calculate cosine similarity between two embeddings
-    def _calculate_similarity(self, embedding1: np.ndarray, embedding2: np.ndarray) -> float:
-        # Handle zero vectors
-        if np.all(embedding1 == 0) or np.all(embedding2 == 0):
-            return 0.0
-        
+    # Lazy load the embedding model
+    def _get_embedding_model(self):
+        if self.embedding_model is None:
+            self._log(f"Loading embedding model")
+            self.embedding_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+        return self.embedding_model
+    
+    # Preprocess text to remove headers, footers, and page numbers
+    def _preprocess_text(self, text: str) -> str:
+        text = self.patterns['page_number'].sub('', text)
+        text = self.patterns['header'].sub('', text)
+        text = re.sub(r'\r\n', '\n', text)
+        text = re.sub(r'\n{3,}', '\n\n', text)
+        text = re.sub(r'([.!?])"(\s)', r'\1" \2', text)
+        return text.strip()
+    
+    # Check if text contains a structural boundary like a chapter heading
+    def _is_structural_boundary(self, text: str) -> bool:
+        if not self.respect_structure:
+            return False
+        first_line = text.strip().split('\n')[0] if text.strip() else ""
+        return bool(self.patterns['chapter'].search(first_line) or 
+                    self.patterns['scene_break'].search(first_line))
+    
+    # Calculate semantic similarity between two text segments
+    def _calculate_similarity(self, text1: str, text2: str) -> float:
+        if len(text1) < 100 or len(text2) < 100:
+            return 1.0
         try:
-            similarity = np.dot(embedding1, embedding2) / (np.linalg.norm(embedding1) * np.linalg.norm(embedding2))
+            model = self._get_embedding_model()
+            embed1 = model.encode(text1)
+            embed2 = model.encode(text2)
+            similarity = np.dot(embed1, embed2) / (np.linalg.norm(embed1) * np.linalg.norm(embed2))
             return float(similarity)
         except Exception as e:
             self._log(f"Error calculating similarity: {str(e)}")
             return 0.0
     
-    # Check if two text segments are semantically similar
-    def _is_semantically_similar(self, text1: str, text2: str) -> bool:
-        # For very short texts, consider them similar to avoid over-chunking
-        if len(text1) < 50 or len(text2) < 50:
-            return True
+    # Split text into sentences using regex pattern matching
+    def _split_into_sentences(self, text: str) -> List[str]:
+        if not text:
+            return []
+        sentences = self.patterns['sentence_end'].split(text)
+        result = []
+        terminators = re.findall(self.patterns['sentence_end'], text)
         
-        try:
-            # Get embeddings for both text segments
-            embedding1 = self.embedding_model.encode(text1, convert_to_numpy=True)
-            embedding2 = self.embedding_model.encode(text2, convert_to_numpy=True)
-            
-            # Calculate similarity
-            similarity = self._calculate_similarity(embedding1, embedding2)
-            
-            return similarity >= self.similarity_threshold
-        except Exception as e:
-            self._log(f"Error in semantic similarity check: {str(e)}")
-            return True
+        for i, sentence in enumerate(sentences[:-1]):
+            if i < len(terminators):
+                result.append(sentence + terminators[i])
+            else:
+                result.append(sentence)
+        
+        if sentences[-1].strip():
+            result.append(sentences[-1])
+        
+        return [s.strip() for s in result if s.strip()]
     
-    # Split text into chunks while respecting sentence boundaries
+    # Adjust chunk boundary to ensure it ends at a sentence boundary
+    def _adjust_chunk_boundary(self, chunk: str) -> str:
+        if re.search(r'[.!?][\'\"]?$', chunk.strip()):
+            return chunk
+        
+        match = list(re.finditer(r'[.!?][\'\"]?\s+', chunk))
+        if match:
+            return chunk[:match[-1].end()].strip()
+        
+        return chunk
+    
+    # Split text into semantically coherent chunks
     def split_text(self, text: str) -> List[str]:
         if not text or not text.strip():
             return []
         
-        # Remove page numbers and headers first
-        text = self.page_number_pattern.sub('', text)
-        text = self.book_title_pattern.sub('', text)
+        # Preprocess text and split into paragraphs
+        cleaned_text = self._preprocess_text(text)
+        paragraphs = [p.strip() for p in re.split(r'\n\s*\n', cleaned_text) if p.strip()]
         
-        # Normalize line breaks and whitespace
-        text = re.sub(r'\r\n', '\n', text)
-        text = re.sub(r'\n{3,}', '\n\n', text)
+        # Group paragraphs into chunks
+        chunks, current_chunk, current_size = [], [], 0
         
-        # Add explicit handling for dialogue and quotes which might confuse sentence tokenizers
-        text = re.sub(r'([.!?])"(\s)', r'\1" \2', text)  # Fix quotes after sentence endings
-        
-        # Better regex for sentence splitting as fallback
-        def better_sentence_split(text):
-            # More robust regex that handles various edge cases
-            pattern = r'(?<=[.!?])\s+(?=[A-Z])'
-            sentences = re.split(pattern, text)
-            
-            # Further process each potential sentence to avoid fragments
-            result = []
-            buffer = ""
-            for sent in sentences:
-                # Check if this looks like a complete sentence
-                if re.search(r'[.!?]\s*$', sent) or len(sent) > 100:
-                    if buffer:
-                        result.append(buffer + " " + sent)
-                        buffer = ""
-                    else:
-                        result.append(sent)
-                else:
-                    if buffer:
-                        buffer += " " + sent
-                    else:
-                        buffer = sent
-            
-            # Add any remaining buffer
-            if buffer:
-                result.append(buffer)
+        for paragraph in paragraphs:
+            # Start new chunk at structural boundaries
+            if self._is_structural_boundary(paragraph):
+                if current_chunk:
+                    chunks.append(self._adjust_chunk_boundary("\n\n".join(current_chunk)))
+                current_chunk, current_size = [paragraph], len(paragraph)
+                continue
                 
-            return result
-        
-        try:
-            from nltk.tokenize import PunktSentenceTokenizer
-            tokenizer = PunktSentenceTokenizer()
-            sentences = tokenizer.tokenize(text)
-        except Exception as e:
-            self._log(f"NLTK tokenization failed: {str(e)}. Using fallback.")
-            sentences = better_sentence_split(text)
-        
-        # Process sentences into semantically coherent chunks
-        chunks = self._group_sentences_semantically(sentences)
-        
-        # Apply post-processing to ensure complete sentences
-        chunks = self._ensure_complete_sentences(chunks)
-        
-        return chunks
-    
-    # Group sentences into semantically coherent chunks
-    def _group_sentences_semantically(self, sentences: List[str]) -> List[str]:
-        if not sentences:
-            return []
-        
-        chunks = []
-        current_chunk = sentences[0]
-        current_sentences = [sentences[0]]
-        
-        for i in range(1, len(sentences)):
-            # Check if adding this sentence would exceed size limit
-            if len(current_chunk) + len(sentences[i]) + 1 > self.max_chunk_size:
-                # Never break in the middle of a sentence - complete the current chunk
-                chunks.append(current_chunk)
-                current_chunk = sentences[i]
-                current_sentences = [sentences[i]]
-            else:
-                # ALWAYS add the complete sentence to the current chunk, regardless of semantic similarity
-                # This ensures we never break sentences
-                current_chunk += " " + sentences[i]
-                current_sentences.append(sentences[i])
+            # Check if adding paragraph exceeds max size
+            if current_size + len(paragraph) > self.max_chunk_size and current_chunk:
+                chunks.append(self._adjust_chunk_boundary("\n\n".join(current_chunk)))
+                current_chunk, current_size = [paragraph], len(paragraph)
+                continue
+                
+            # Check semantic similarity
+            if current_chunk and len(current_chunk[-1]) > 100 and len(paragraph) > 100:
+                if self._calculate_similarity(current_chunk[-1], paragraph) < self.similarity_threshold and current_size > self.min_chunk_size:
+                    chunks.append(self._adjust_chunk_boundary("\n\n".join(current_chunk)))
+                    current_chunk, current_size = [paragraph], len(paragraph)
+                    continue
+            
+            # Add paragraph to current chunk
+            current_chunk.append(paragraph)
+            current_size += len(paragraph) + 4
         
         # Add the last chunk
         if current_chunk:
-            chunks.append(current_chunk)
+            chunks.append(self._adjust_chunk_boundary("\n\n".join(current_chunk)))
         
-        # Handle structural boundaries if needed
-        if self.respect_structure:
-            chunks = self._respect_structural_boundaries(chunks)
-        
-        # Merge small chunks if needed
-        return self._merge_small_chunks(chunks)
-    
-    # Ensure chunks start and end with complete sentences
-    def _respect_structural_boundaries(self, chunks: List[str]) -> List[str]:
-        if not chunks:
-            return []
-        
-        result = []
-        current = chunks[0]
-        
-        for i in range(1, len(chunks)):
-            # If this chunk starts with a chapter heading, start a new chunk
-            if self.chapter_pattern.search(chunks[i].strip().split("\n")[0]):
-                result.append(current)
-                current = chunks[i]
-            # If this chunk starts with a scene break, start a new chunk
-            elif self.scene_break_pattern.search(chunks[i].strip().split("\n")[0]):
-                result.append(current)
-                current = chunks[i]
-            else:
-                # Check if adding would exceed size
-                if len(current) + len(chunks[i]) + 2 <= self.max_chunk_size:
-                    current += " " + chunks[i]
-                else:
-                    result.append(current)
-                    current = chunks[i]
-        
-        # Add the last chunk
-        if current:
-            result.append(current)
+        # Process chunks for size constraints and ensure sentence boundaries
+        final_chunks = []
+        i = 0
+        while i < len(chunks):
+            chunk = chunks[i]
             
-        return result
-    
-    # Merge small chunks to avoid tiny fragments
-    def _merge_small_chunks(self, chunks: List[str]) -> List[str]:
-        """Merge small chunks where possible to avoid tiny fragments."""
-        if len(chunks) <= 1:
-            return chunks
+            # Handle small chunks by merging with next
+            if len(chunk) < self.min_chunk_size and i < len(chunks) - 1:
+                next_chunk = chunks[i + 1]
+                if len(chunk) + len(next_chunk) <= self.max_chunk_size:
+                    i += 1
+                    continue
             
-        result = []
-        current = chunks[0]
-        
-        for i in range(1, len(chunks)):
-            # If current chunk is too small and can be merged with next
-            if len(current) < self.min_chunk_size and len(current) + len(chunks[i]) + 1 <= self.max_chunk_size:
-                current += " " + chunks[i]
-            else:
-                result.append(current)
-                current = chunks[i]
-                
-        # Add the last chunk
-        if current:
-            result.append(current)
-            
-        return result
-    
-    # Ensure chunks start and end with complete sentences
-    def _ensure_complete_sentences(self, chunks: List[str]) -> List[str]:
-        if not chunks:
-            return []
-
-        result = []
-        
-        for i, chunk in enumerate(chunks):
-            # Skip empty chunks
-            if not chunk.strip():
-                continue
-                
-            # Fix chunks that start with lowercase (likely mid-sentence)
-            if chunk and chunk[0].islower() and i > 0 and result:
-                # Try to find the last sentence in the previous chunk
-                prev_chunk = result[-1]
-                prev_sentences = re.split(r'(?<=[.!?])\s+', prev_chunk)
-                
-                if prev_sentences and not prev_chunk.endswith(('.', '!', '?', '."', '!"', '?"')):
-                    # Take the incomplete sentence from previous chunk
-                    incomplete_sent = prev_sentences[-1]
+            # Split large chunks into sentences if needed
+            if len(chunk) > self.max_chunk_size:
+                sentences = self._split_into_sentences(chunk)
+                if len(sentences) > 1:
+                    sub_chunks, sub_chunk, sub_size = [], [], 0
+                    for sentence in sentences:
+                        if sub_size + len(sentence) > self.max_chunk_size and sub_chunk:
+                            sub_chunks.append(" ".join(sub_chunk))
+                            sub_chunk, sub_size = [sentence], len(sentence)
+                        else:
+                            sub_chunk.append(sentence)
+                            sub_size += len(sentence) + 1
                     
-                    # Find where to split the current chunk
-                    current_sentences = re.split(r'(?<=[.!?])\s+', chunk)
-                    if current_sentences:
-                        # Complete the sentence
-                        completed_sent = incomplete_sent + " " + current_sentences[0]
-                        
-                        # Update previous chunk without the incomplete sentence
-                        result[-1] = " ".join(prev_sentences[:-1])
-                        
-                        # Update current chunk with the completed sentence
-                        chunk = completed_sent + " " + " ".join(current_sentences[1:])
+                    if sub_chunk:
+                        sub_chunks.append(" ".join(sub_chunk))
+                    
+                    final_chunks.extend(sub_chunks)
+                else:
+                    final_chunks.append(chunk)
+            else:
+                final_chunks.append(chunk)
+            i += 1
         
-            result.append(chunk)
-    
-        return result
-    
-    # Create documents from text and metadata
-    def create_documents(
-        self, texts: List[str], metadatas: Optional[List[dict]] = None
-    ) -> List[Document]:
-        documents = []
+        # Add overlap between chunks if needed
+        if self.chunk_overlap > 0 and len(final_chunks) > 1:
+            overlapped_chunks = [final_chunks[0]]
+            
+            for i in range(1, len(final_chunks)):
+                prev_chunk = final_chunks[i-1]
+                current_chunk = final_chunks[i]
+                
+                prev_sentences = self._split_into_sentences(prev_chunk)
+                if prev_sentences:
+                    overlap_size, overlap_sentences = 0, []
+                    
+                    for sentence in reversed(prev_sentences):
+                        if overlap_size + len(sentence) > self.chunk_overlap:
+                            break
+                        overlap_sentences.insert(0, sentence)
+                        overlap_size += len(sentence) + 1
+                    
+                    if overlap_sentences:
+                        overlap_text = " ".join(overlap_sentences)
+                        if not current_chunk.startswith(overlap_text):
+                            current_chunk = overlap_text + " " + current_chunk
+                
+                overlapped_chunks.append(current_chunk)
+            
+            return overlapped_chunks
         
+        return final_chunks
+    
+    # Split a list of documents into chunks
+    def split_documents(self, documents: List[Document]) -> List[Document]:
+        texts = [doc.page_content for doc in documents]
+        metadatas = [doc.metadata for doc in documents]
+        
+        result_docs = []
         for i, text in enumerate(texts):
             metadata = metadatas[i] if metadatas else {}
             chunks = self.split_text(text)
@@ -311,35 +229,12 @@ class SemanticTextSplitter(TextSplitter):
                 doc_metadata["chunk"] = j
                 doc_metadata["total_chunks"] = len(chunks)
                 
-                # Add basic structure detection
                 if self.respect_structure:
-                    # Detect if chunk contains chapter heading
-                    if self.chapter_pattern.search(chunk):
+                    lines = chunk.strip().split('\n')
+                    if lines and self.patterns['chapter'].search(lines[0]):
                         doc_metadata["contains_chapter_heading"] = True
-                    
-                    # Detect if chunk contains scene break
-                    if self.scene_break_pattern.search(chunk):
-                        doc_metadata["contains_scene_break"] = True
+                        doc_metadata["current_chapter"] = lines[0].strip()
                 
-                documents.append(Document(page_content=chunk, metadata=doc_metadata))
+                result_docs.append(Document(page_content=chunk, metadata=doc_metadata))
         
-        return documents
-    
-    # Split documents into chunks
-    def split_documents(self, documents: List[Document]) -> List[Document]:
-        texts = [doc.page_content for doc in documents]
-        metadatas = [doc.metadata for doc in documents]
-        
-        split_docs = self.create_documents(texts, metadatas)
-        
-        # Add post-processing to fix sentence boundaries
-        if split_docs:
-            chunks = [doc.page_content for doc in split_docs]
-            fixed_chunks = self._ensure_complete_sentences(chunks)
-            
-            # Update the document chunks with fixed content
-            for i, fixed_chunk in enumerate(fixed_chunks):
-                if i < len(split_docs):
-                    split_docs[i].page_content = fixed_chunk
-        
-        return split_docs
+        return result_docs

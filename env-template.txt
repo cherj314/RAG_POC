@@ -9,25 +9,18 @@ DB_HOST=postgres
 DB_PORT=5432
 DB_USER=myuser
 DB_PASSWORD=your_secure_password_here
-
-# Vector DB Configuration
 COLLECTION_NAME=document_chunks
 
-# Embedding model to use for document vectorization
+# Embedding model to use for document vectorization, all-mpnet-base-v2 takes a lot longer than all-MiniLM-L6-v2
 EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+#EMBEDDING_MODEL=all-mpnet-base-v2
 
 # LLM Configuration
-# Default model type (openai or ollama)
 DEFAULT_MODEL_TYPE=openai
-# Available model types as comma-separated list, disable ollama to speed up development
 AVAILABLE_MODEL_TYPES=openai,ollama
-# Default OpenAI model
 OPENAI_MODEL=gpt-4o
-# Default
 OLLAMA_MODEL=llama3:instruct
-# Temperature for generation (0.0-1.0)
 TEMPERATURE=0.3
-# Maximum tokens to generate
 MAX_TOKENS=2048
 
 # Ollama Configuration
@@ -35,28 +28,25 @@ OLLAMA_BASE_URL=http://ollama:11434
 OLLAMA_PORT=11434
 
 # Chunking Configuration
-# Chunking Configuration
-MIN_CHUNK_SIZE=200  # Reduced from 500
-MAX_CHUNK_SIZE=3000  # Increased from 2000
-SEMANTIC_SIMILARITY=0.6  # Increased from 0.4
+MIN_CHUNK_SIZE=200  
+MAX_CHUNK_SIZE=2000
+SEMANTIC_SIMILARITY=0.6 
 RESPECT_STRUCTURE=true
-CHUNK_OVERLAP=200  # New parameter
+CHUNK_OVERLAP=100
+
+# Query Configuration
+QUERY_SIMILARITY_THRESHOLD=0.2
 
 # Processing Parameters
-# Batch size for processing documents
 BATCH_SIZE=500
-# Number of parallel workers for document processing
 MAX_WORKERS=8
 
 # Data Location
-# Directory containing documents to be indexed
 DOCS_DIR=Documents
 
 # API Server Configuration
-API_HOST=0.0.0.0
 API_PORT=8000
 
 # Web UI Configuration (for OpenWebUI)
-# Authentication token for the web interface
 WEBUI_AUTH_TOKEN=your_secure_token_here
 WEBUI_PORT=3000
