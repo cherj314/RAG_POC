@@ -108,8 +108,8 @@ def generate_response(prompt, max_tokens=2048, model_type=None, model=None, temp
     
     return "Error generating response after multiple attempts. Please try again later."
 
+# Format the response to ensure readability
 def format_response(raw_content):
-    """Format the response to ensure readability and proper formatting"""
     # Replace multiple newlines with double newlines
     content = re.sub(r'\n{3,}', '\n\n', raw_content)
     # Add newlines before headers
@@ -120,8 +120,8 @@ def format_response(raw_content):
     content = re.sub(r'\[PASSAGE\s+(\d+)\]', r'[PASSAGE \1]', content)
     return content
 
+# Get the list of available models for OpenAI and Ollama
 def get_available_models():
-    """Get the list of available models for OpenAI and Ollama"""
     models = {
         "openai": ["gpt-4o"],
         "ollama": ["llama3:instruct"]
@@ -138,8 +138,8 @@ def get_available_models():
     
     return models
 
+# Build a prompt for the model using retrieved context and user input
 def build_prompt(context_chunks, user_prompt):
-    """Build a prompt that combines retrieved context with the user request"""
     # Format chunks with metadata
     formatted_chunks = []
     

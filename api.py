@@ -112,7 +112,6 @@ def format_error_response(error_message):
     }
 
 def get_default_model_name():
-    """Get the default model name based on the model type"""
     if DEFAULT_MODEL_TYPE == "openai":
         return DEFAULT_OPENAI_MODEL or "gpt-4o"
     elif DEFAULT_MODEL_TYPE == "ollama":

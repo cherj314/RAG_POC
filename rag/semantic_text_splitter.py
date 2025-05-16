@@ -5,8 +5,8 @@ from langchain.text_splitter import TextSplitter
 from sentence_transformers import SentenceTransformer
 import numpy as np
 
+# Text splitter that creates chunks based on semantic similarity
 class SemanticTextSplitter(TextSplitter):
-    """Text splitter that creates chunks based on semantic similarity while respecting document structure."""
     
     def __init__(
         self,
@@ -37,19 +37,18 @@ class SemanticTextSplitter(TextSplitter):
         }
     
     def _log(self, message: str) -> None:
-        """Print log messages if verbose mode is enabled."""
         if self.verbose:
             print(f"[SemanticSplitter] {message}")
     
+    # Lazy load the embedding model
     def _get_embedding_model(self):
-        """Lazy load the embedding model when needed."""
         if self.embedding_model is None:
             self._log(f"Loading embedding model")
             self.embedding_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
         return self.embedding_model
     
+    # Preprocess text to remove headers, footers, and page numbers
     def _preprocess_text(self, text: str) -> str:
-        """Clean text by removing headers, footers, page numbers."""
         text = self.patterns['page_number'].sub('', text)
         text = self.patterns['header'].sub('', text)
         text = re.sub(r'\r\n', '\n', text)
@@ -57,16 +56,16 @@ class SemanticTextSplitter(TextSplitter):
         text = re.sub(r'([.!?])"(\s)', r'\1" \2', text)
         return text.strip()
     
+    # Check if text contains a structural boundary like a chapter heading
     def _is_structural_boundary(self, text: str) -> bool:
-        """Check if text contains a structural boundary like a chapter heading."""
         if not self.respect_structure:
             return False
         first_line = text.strip().split('\n')[0] if text.strip() else ""
         return bool(self.patterns['chapter'].search(first_line) or 
                     self.patterns['scene_break'].search(first_line))
     
+    # Calculate semantic similarity between two text segments
     def _calculate_similarity(self, text1: str, text2: str) -> float:
-        """Calculate semantic similarity between two text segments."""
         if len(text1) < 100 or len(text2) < 100:
             return 1.0
         try:
@@ -79,8 +78,8 @@ class SemanticTextSplitter(TextSplitter):
             self._log(f"Error calculating similarity: {str(e)}")
             return 0.0
     
+    # Split text into sentences using regex pattern matching
     def _split_into_sentences(self, text: str) -> List[str]:
-        """Split text into sentences using regex pattern matching."""
         if not text:
             return []
         sentences = self.patterns['sentence_end'].split(text)
@@ -98,8 +97,8 @@ class SemanticTextSplitter(TextSplitter):
         
         return [s.strip() for s in result if s.strip()]
     
+    # Adjust chunk boundary to ensure it ends at a sentence boundary
     def _adjust_chunk_boundary(self, chunk: str) -> str:
-        """Ensure a chunk ends at a sentence boundary."""
         if re.search(r'[.!?][\'\"]?$', chunk.strip()):
             return chunk
         
@@ -109,8 +108,8 @@ class SemanticTextSplitter(TextSplitter):
         
         return chunk
     
+    # Split text into semantically coherent chunks
     def split_text(self, text: str) -> List[str]:
-        """Split text into semantically coherent chunks."""
         if not text or not text.strip():
             return []
         
@@ -215,8 +214,8 @@ class SemanticTextSplitter(TextSplitter):
         
         return final_chunks
     
+    # Split a list of documents into chunks
     def split_documents(self, documents: List[Document]) -> List[Document]:
-        """Split a list of documents into chunks."""
         texts = [doc.page_content for doc in documents]
         metadatas = [doc.metadata for doc in documents]
         

@@ -30,8 +30,8 @@ MAX_WORKERS = int(os.getenv("MAX_WORKERS"))
 # Database connection string
 CONNECTION_STRING = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
+# Set up PostgreSQL database with pgvector extension
 def setup_database():
-    """Set up PostgreSQL database with pgvector extension"""
     print("📊 Setting up database...")
     start_time = time.time()
     
@@ -93,8 +93,8 @@ def setup_database():
     
     print(f"✅ Database setup completed in {time.time() - start_time:.2f}s")
 
+# Ensure chunks starts and ends with complete sentences
 def ensure_complete_sentences(text):
-    """Ensure text starts and ends with complete sentences"""
     if not text or not text.strip():
         return text
         
@@ -118,8 +118,8 @@ def ensure_complete_sentences(text):
     
     return text
 
+# Process a single document file and split it into chunks
 def process_document(file_path):
-    """Process a document file, extract content, and split into chunks"""
     try:
         start_time = time.time()
         file_name = os.path.basename(file_path)
@@ -219,8 +219,8 @@ def process_document(file_path):
         print(f"Detailed error: {traceback.format_exc()}")
         return []
 
+# Process multiple documents in parallel
 def process_documents(doc_files):
-    """Process multiple documents in parallel"""
     if not doc_files:
         print("❌ No documents found for processing")
         return []
@@ -238,8 +238,8 @@ def process_documents(doc_files):
     print(f"✅ Document processing: generated {len(all_chunks)} chunks in {time.time() - start_time:.2f}s")
     return all_chunks
 
+# Store chunks in the vector database with batching
 def store_chunks_in_db(chunks, embeddings):
-    """Store chunks in the vector database with batching"""
     if not chunks:
         print("No chunks to store.")
         return
@@ -270,8 +270,8 @@ def store_chunks_in_db(chunks, embeddings):
     
     print(f"✅ All chunks stored in {time.time() - start_time:.2f}s")
 
+# Main function to run the ingestion pipeline
 def run_pipeline():
-    """Main function to run the ingestion pipeline"""
     print("\n" + "=" * 50 + "\n📚 Starting document ingestion pipeline\n" + "=" * 50 + "\n")
     pipeline_start = time.time()
     

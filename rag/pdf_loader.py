@@ -19,11 +19,12 @@ class PDFLoader:
         if self.verbose:
             print(f"[PDFLoader] {message}")
 
+    # Check if the text is a header based on its position
     def _is_header(self, text: str, y_pos: float, page_height: float) -> bool:
         return y_pos < page_height * 0.06
     
+    # Extract text from a page, excluding headers and chapter headings
     def _extract_text(self, page: fitz.Page) -> str:
-        """Extract text from a page excluding headers and chapter headings."""
         page_dict = page.get_textpage().extractDICT()
         page_height = page.rect.height
         
@@ -51,8 +52,8 @@ class PDFLoader:
         
         return "\n\n".join(content_blocks)
     
+    # Load the PDF and convert pages to Document objects
     def load(self) -> List[Document]:
-        """Load the PDF and convert pages to Document objects."""
         self._log(f"Processing PDF: {os.path.basename(self.file_path)}")
         
         documents = []
