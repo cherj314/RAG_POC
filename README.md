@@ -3,7 +3,6 @@
 # RAG_POC: Harry Potter Knowledge Base
 
 [![GitHub issues](https://img.shields.io/github/issues/cherj314/RAG_POC.svg)](https://github.com/cherj314/RAG_POC/issues)
-[![GitHub license](https://img.shields.io/github/license/cherj314/RAG_POC.svg)](https://github.com/cherj314/RAG_POC/blob/master/LICENSE.txt)
 
 <div align="center">
   <h3 align="center">RAG_POC</h3>
@@ -71,69 +70,48 @@ Follow these steps to set up a local copy of the project.
 
 ### Prerequisites
 
+* wsl2 (Ubuntu)
 * Docker and Docker Compose
 * OpenAI API key (if using OpenAI models)
 * Git
 
 ### Installation
 
-1. Clone the repository
+1. Clone the repository in Ubuntu environment with prerequisites installed
    ```sh
    git clone https://github.com/cherj314/RAG_POC.git
    cd RAG_POC
    ```
 
-2. Create a `.env` file based on the template
+2. Create a `.env` file based on the template and add your OpenAI API key
    ```sh
    cp env-template.txt .env
-   ```
-
-3. Edit the `.env` file and add your OpenAI API key
-   ```
    OPENAI_API_KEY=your_api_key_here
    ```
 
-4. Start the services with Docker Compose
-   ```sh
-   docker-compose up -d
-   ```
-
-5. Add your Harry Potter books in text (.txt) or PDF (.pdf) format to the `Documents` directory
+3. Add your Harry Potter or other books/files in text (.txt) or PDF (.pdf) format to the `Documents` directory
    ```sh
    mkdir -p Documents
    # Copy your Harry Potter books into the Documents directory
    ```
 
-6. Run the ingestion process
+4. Start the services with Docker Compose
    ```sh
-   docker-compose up ragbot-ingest
+   docker compose up
    ```
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## Usage
 
+The first build can take 10-15 minutes depending on hardware and internet connection, subsequent builds are fast.
+
 Once the system is up and running:
 
 1. Access the web interface at `http://localhost:3000` (or the port specified in your `.env` file)
-2. Login with the auth token specified in your `.env` file
+2. Add a connection to http://localhost:8000 to access ollama and your openai API key to access openAI models
 3. Start asking questions about Harry Potter!
 
-You can also interact with the API directly:
-
-```sh
-# Simple query example
-curl -X POST http://localhost:8000/api/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "messages": [
-      {
-        "role": "user", 
-        "content": "What was Harry Potter's first wand made of?"
-      }
-    ]
-  }'
-```
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -177,32 +155,13 @@ Key modules:
 
 The system can be configured through the `.env` file. Key configuration options include:
 
-### Database Configuration
-```
-POSTGRES_USER=myuser
-POSTGRES_PASSWORD=your_secure_password_here
-POSTGRES_DB=vectordb
-DB_HOST=postgres
-DB_PORT=5432
-```
-
-### Embedding Model
+### Embedding Model - Use alternative for better performance at cost of speed
 ```
 EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
 # Alternative: EMBEDDING_MODEL=all-mpnet-base-v2
 ```
 
-### LLM Configuration
-```
-DEFAULT_MODEL_TYPE=openai
-AVAILABLE_MODEL_TYPES=openai,ollama
-OPENAI_MODEL=gpt-4o
-OLLAMA_MODEL=llama3:instruct
-TEMPERATURE=0.3
-MAX_TOKENS=2048
-```
-
-### Chunking Configuration
+### Chunking Configuration - Adjust and test to improve performance
 ```
 MIN_CHUNK_SIZE=200
 MAX_CHUNK_SIZE=2000
@@ -210,23 +169,5 @@ SEMANTIC_SIMILARITY=0.6
 RESPECT_STRUCTURE=true
 CHUNK_OVERLAP=100
 ```
-
-### Web UI Configuration
-```
-WEBUI_AUTH_TOKEN=your_secure_token_here
-WEBUI_PORT=3000
-```
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-## License
-
-This project is open-source. See `LICENSE.txt` for more information.
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-## Contact
-
-Project Link: [https://github.com/cherj314/RAG_POC](https://github.com/cherj314/RAG_POC)
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
