@@ -1,9 +1,9 @@
+# Official python image
 FROM python:3.9-slim
 
 WORKDIR /app
 
-# Install system dependencies in a single RUN command
-# Group commands to reduce layers and use --no-install-recommends to reduce size
+# Install system dependencies 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     gcc \
@@ -14,14 +14,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libfreetype6-dev \
     libharfbuzz-dev \
     libffi-dev \
-    # Clean up
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements file and install dependencies
 COPY requirements.txt .
-
-# Install Python dependencies more efficiently
-# Pin versions to avoid unnecessary upgrades and use --no-cache-dir
 RUN pip install --no-cache-dir -r requirements.txt \
     && pip install --no-cache-dir huggingface_hub[hf_xet]
 

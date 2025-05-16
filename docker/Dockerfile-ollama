@@ -1,3 +1,4 @@
+# Official Ollama image
 FROM ollama/ollama:latest
 
 # Set environment variables

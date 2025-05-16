@@ -1,3 +1,4 @@
+# Official open-webui image
 FROM ghcr.io/open-webui/open-webui:main
 
 # Install additional dependencies
