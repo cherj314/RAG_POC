@@ -8,8 +8,8 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "tinyllama")
 
+# Generate a response using either OpenAI or Ollama models
 def generate_response(prompt, max_tokens=2048, model_type=None, model=None, temperature=0.3, preserve_formatting=True):
-    """Generate a response using either OpenAI or Ollama models with retry logic"""
     model_type = model_type or os.getenv("DEFAULT_MODEL_TYPE", "openai").lower()
     model = model or (os.getenv("OPENAI_MODEL", "gpt-4o") if model_type == "openai" else os.getenv("OLLAMA_MODEL", "tinyllama"))
     
@@ -123,7 +123,7 @@ def format_response(raw_content):
 def get_available_models():
     """Get the list of available models for OpenAI and Ollama"""
     models = {
-        "openai": ["gpt-4o", "gpt-3.5-turbo"],
+        "openai": ["gpt-4o"],
         "ollama": ["tinyllama"]
     }
     

@@ -14,7 +14,7 @@ from rag.generator import generate_response, get_available_models, build_prompt
 from rag.config import init_db_pool, get_db_connection, release_connection
 
 # Initialize FastAPI app with CORS
-app = FastAPI(title="RAGbot API", description="API for the RAG-based proposal generator")
+app = FastAPI(title="RAG API", description="API for the RAG-based question answering system")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 # Configuration
@@ -24,6 +24,8 @@ AVAILABLE_MODEL_TYPES = os.getenv("AVAILABLE_MODEL_TYPES", "openai").lower().spl
 DEFAULT_OPENAI_MODEL = os.getenv("OPENAI_MODEL")
 DEFAULT_OLLAMA_MODEL = os.getenv("OLLAMA_MODEL")
 QUERY_SIMILARITY_THRESHOLD = float(os.getenv("QUERY_SIMILARITY_THRESHOLD", "0.3"))
+MAX_TOKENS = int(os.getenv("MAX_TOKENS", "2048"))
+TEMPERATURE = float(os.getenv("TEMPERATURE", "0.3"))
 
 # Data models
 class ProposalRequest(BaseModel):
@@ -41,9 +43,9 @@ class Message(BaseModel):
 class ChatRequest(BaseModel):
     messages: List[Message]
     stream: Optional[bool] = False
-    model: Optional[str] = "ragbot"
-    temperature: Optional[float] = 0.7
-    max_tokens: Optional[int] = 2048
+    model: Optional[str] = None
+    temperature: Optional[float] = TEMPERATURE
+    max_tokens: Optional[int] = MAX_TOKENS
     show_retrieved: Optional[bool] = True
     similarity_threshold: Optional[float] = QUERY_SIMILARITY_THRESHOLD
     
@@ -80,7 +82,7 @@ def format_retrieved_chunks(chunks):
              "score": score} for doc, metadata, score in chunks]
 
 def parse_model_info(model_string):
-    if not model_string or model_string == "ragbot":
+    if not model_string:
         return DEFAULT_MODEL_TYPE, None
     
     if "/" in model_string:
@@ -89,6 +91,7 @@ def parse_model_info(model_string):
         model_name = parts[1] if len(parts) > 1 else None
         return (model_type, model_name) if model_type in AVAILABLE_MODEL_TYPES else (DEFAULT_MODEL_TYPE, model_name)
     
+    # If model type not explicitly specified, use default with provided model name
     return DEFAULT_MODEL_TYPE, model_string
 
 def format_error_response(error_message):
@@ -96,17 +99,26 @@ def format_error_response(error_message):
         "id": f"chatcmpl-error-{int(time.time())}",
         "object": "chat.completion",
         "created": int(time.time()),
-        "model": "ragbot",
+        "model": f"{DEFAULT_MODEL_TYPE}/{get_default_model_name()}",
         "choices": [{
             "index": 0,
             "message": {
                 "role": "assistant",
-                "content": f"I encountered an error processing your request: {error_message}. The RAGbot system administrators have been notified."
+                "content": f"I encountered an error processing your request: {error_message}. The system administrators have been notified."
             },
             "finish_reason": "stop"
         }],
         "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     }
+
+def get_default_model_name():
+    """Get the default model name based on the model type"""
+    if DEFAULT_MODEL_TYPE == "openai":
+        return DEFAULT_OPENAI_MODEL or "gpt-4o"
+    elif DEFAULT_MODEL_TYPE == "ollama":
+        return DEFAULT_OLLAMA_MODEL or "llama3:instruct"
+    else:
+        return "unknown"
 
 # Routing endpoints
 @app.post("/api/generate-proposal")
@@ -164,6 +176,11 @@ async def process_chat_completion(request: ChatRequest):
             return format_error_response("No user message found in the request")
         
         model_type, model_name = parse_model_info(request.model)
+        
+        # If model name is not provided, use the default for the model type
+        if not model_name:
+            model_name = DEFAULT_OPENAI_MODEL if model_type == "openai" else DEFAULT_OLLAMA_MODEL
+        
         chunks = search_postgres(last_user_message, k=5, similarity_threshold=getattr(request, 'similarity_threshold', QUERY_SIMILARITY_THRESHOLD))
         retrieved_chunks = format_retrieved_chunks(chunks)
         show_retrieved = getattr(request, 'show_retrieved', True)
@@ -179,7 +196,7 @@ async def process_chat_completion(request: ChatRequest):
                     if not chunk_text.endswith('\n'):
                         chunk_text += '\n'
                     retrieved_content += f"{chunk_text}\n"
-                retrieved_content += "---\n\n**Generating proposal based on these sources...**\n\n"
+                retrieved_content += "---\n\n**Generating response based on these sources...**\n\n"
                 
                 generated_response = generate_response(
                     prompt, max_tokens=request.max_tokens, model_type=model_type,
@@ -203,11 +220,14 @@ async def process_chat_completion(request: ChatRequest):
                 "related to Harry Potter, which is my area of expertise?"
             )
         
+        # Create model identifier
+        model_identifier = f"{model_type}/{model_name}"
+        
         response = {
             "id": f"chatcmpl-{int(time.time())}",
             "object": "chat.completion",
             "created": int(time.time()),
-            "model": request.model or "ragbot",
+            "model": model_identifier,
             "choices": [{
                 "index": 0,
                 "message": {
@@ -223,7 +243,7 @@ async def process_chat_completion(request: ChatRequest):
             }
         }
         
-        return StreamingResponse(stream_response(generated_text)) if request.stream else response
+        return StreamingResponse(stream_response(generated_text, model_identifier)) if request.stream else response
     
     except Exception as e:
         print(f"Error in process_chat_completion: {str(e)}")
@@ -231,7 +251,7 @@ async def process_chat_completion(request: ChatRequest):
         traceback.print_exc()
         return format_error_response(f"I encountered an error processing your request: {str(e)}")
 
-async def stream_response(content: str):
+async def stream_response(content: str, model_identifier: str):
     paragraphs = content.split('\n\n')
     
     for i, paragraph in enumerate(paragraphs):
@@ -239,7 +259,7 @@ async def stream_response(content: str):
             "id": f"chatcmpl-{int(time.time())}",
             "object": "chat.completion.chunk",
             "created": int(time.time()),
-            "model": "ragbot",
+            "model": model_identifier,
             "choices": [{
                 "index": 0,
                 "delta": {"content": paragraph},
@@ -254,7 +274,7 @@ async def stream_response(content: str):
                 "id": f"chatcmpl-{int(time.time())}",
                 "object": "chat.completion.chunk",
                 "created": int(time.time()),
-                "model": "ragbot",
+                "model": model_identifier,
                 "choices": [{
                     "index": 0,
                     "delta": {"content": "\n\n"},
@@ -269,7 +289,7 @@ async def stream_response(content: str):
         "id": f"chatcmpl-{int(time.time())}",
         "object": "chat.completion.chunk",
         "created": int(time.time()),
-        "model": "ragbot",
+        "model": model_identifier,
         "choices": [{
             "index": 0,
             "delta": {},
@@ -299,20 +319,23 @@ async def retrieve_chunks(request: ProposalRequest):
 async def list_models():
     try:
         available_models = get_available_models()
-        model_data = [{"id": "ragbot", "object": "model", "created": int(time.time()),
-                       "owned_by": "organization-owner", "permission": [], "root": "ragbot", "parent": None}]
+        model_data = []
         
         for model_type, models in available_models.items():
             model_data.extend([{
-                "id": f"{model_type}/{model}", "object": "model", "created": int(time.time()),
-                "owned_by": model_type, "permission": [], "root": model, "parent": None
+                "id": f"{model_type}/{model}", 
+                "object": "model", 
+                "created": int(time.time()),
+                "owned_by": model_type, 
+                "permission": [], 
+                "root": model, 
+                "parent": None
             } for model in models])
         
         return {"object": "list", "data": model_data}
     except Exception as e:
         print(f"Error listing models: {str(e)}")
-        return {"object": "list", "data": [{"id": "ragbot", "object": "model", "created": int(time.time()),
-                                           "owned_by": "organization-owner", "permission": [], "root": "ragbot", "parent": None}]}
+        return {"object": "list", "data": []}
 
 @app.get("/api/health")
 async def health_check():

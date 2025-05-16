@@ -4,7 +4,6 @@ from psycopg2.pool import SimpleConnectionPool
 
 # Load environment variables
 load_dotenv()
-
 DB_HOST = os.getenv("DB_HOST")
 DB_PORT = int(os.getenv("DB_PORT"))
 DB_NAME = os.getenv("POSTGRES_DB")
