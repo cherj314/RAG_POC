@@ -1,48 +1,10 @@
 <a id="readme-top"></a>
 
-# RAG_POC: Harry Potter Knowledge Base
+# RAG_POC: Harry Potter Retrieval Augmented Generation System
+
+## Create a Harry Potter Expert that uses Citations
 
 [![GitHub issues](https://img.shields.io/github/issues/cherj314/RAG_POC.svg)](https://github.com/cherj314/RAG_POC/issues)
-
-<div align="center">
-  <h3 align="center">RAG_POC</h3>
-  <p align="center">
-    A Retrieval-Augmented Generation system for Harry Potter knowledge
-    <br />
-    <a href="https://github.com/cherj314/RAG_POC"><strong>Explore the docs »</strong></a>
-    <br />
-    <br />
-    <a href="https://github.com/cherj314/RAG_POC/issues/new?labels=bug&template=bug-report---.md">Report Bug</a>
-    ·
-    <a href="https://github.com/cherj314/RAG_POC/issues/new?labels=enhancement&template=feature-request---.md">Request Feature</a>
-  </p>
-</div>
-
-<!-- TABLE OF CONTENTS -->
-<details>
-  <summary>Table of Contents</summary>
-  <ol>
-    <li>
-      <a href="#about-the-project">About The Project</a>
-      <ul>
-        <li><a href="#built-with">Built With</a></li>
-      </ul>
-    </li>
-    <li>
-      <a href="#getting-started">Getting Started</a>
-      <ul>
-        <li><a href="#prerequisites">Prerequisites</a></li>
-        <li><a href="#installation">Installation</a></li>
-      </ul>
-    </li>
-    <li><a href="#usage">Usage</a></li>
-    <li><a href="#architecture">Architecture</a></li>
-    <li><a href="#features">Features</a></li>
-    <li><a href="#configuration">Configuration</a></li>
-    <li><a href="#license">License</a></li>
-    <li><a href="#contact">Contact</a></li>
-  </ol>
-</details>
 
 ## About The Project
 
