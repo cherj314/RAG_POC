@@ -131,7 +131,7 @@ def process_document(file_path):
         
         # Load document based on file type
         if file_extension == '.pdf':
-            loader = PDFLoader(file_path, verbose=True, extract_images=False)
+            loader = PDFLoader(file_path, verbose=True)
             document = loader.load()
             # Filter empty documents and ensure complete sentences
             document = [doc for doc in document if doc.page_content.strip()]

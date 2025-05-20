@@ -3,8 +3,7 @@ from typing import List
 from langchain.docstore.document import Document
 
 class PDFLoader:
-    def __init__(self, file_path: str, encoding: str = "utf-8", verbose: bool = False, 
-                 max_workers: int = 4, batch_size: int = 10, extract_images: bool = False):
+    def __init__(self, file_path: str, verbose: bool = False):
         self.file_path = file_path
         self.verbose = verbose
         self._current_chapter = None
@@ -19,7 +18,7 @@ class PDFLoader:
             print(f"[PDFLoader] {message}")
 
     # Check if the text is a header based on its position
-    def _is_header(self, text: str, y_pos: float, page_height: float) -> bool:
+    def _is_header(self, y_pos: float, page_height: float) -> bool:
         return y_pos < page_height * 0.06
     
     # Extract text from a page, excluding headers and chapter headings
@@ -39,7 +38,7 @@ class PDFLoader:
                 
             # Skip headers and chapter headings
             y_pos = block.get("bbox", [0, 0, 0, 0])[1]
-            if (self._is_header(block_text, y_pos, page_height) or 
+            if (self._is_header(y_pos, page_height) or 
                 self.patterns['chapter_heading'].match(block_text.strip()) or
                 self.patterns['page_number'].match(block_text.strip())):
                 if self.patterns['chapter_heading'].match(block_text.strip()):
