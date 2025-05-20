@@ -19,6 +19,7 @@ class SemanticTextSplitter(TextSplitter):
         verbose: bool = False
     ):
         super().__init__(chunk_size=max_chunk_size, chunk_overlap=chunk_overlap)
+        self.embedding_model_name = embedding_model
         self.similarity_threshold = similarity_threshold
         self.min_chunk_size = min_chunk_size
         self.max_chunk_size = max_chunk_size
@@ -43,8 +44,8 @@ class SemanticTextSplitter(TextSplitter):
     # Lazy load the embedding model
     def _get_embedding_model(self):
         if self.embedding_model is None:
-            self._log(f"Loading embedding model")
-            self.embedding_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+            self._log(f"Loading embedding model: {self.embedding_model_name}")
+            self.embedding_model = SentenceTransformer(self.embedding_model_name)
         return self.embedding_model
     
     # Preprocess text to remove headers, footers, and page numbers
