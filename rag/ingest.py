@@ -1,4 +1,4 @@
-import os, sys, time, glob, re, concurrent.futures, traceback
+import os, sys, time, glob, re, traceback, concurrent.futures
 from langchain.docstore.document import Document
 from langchain_community.vectorstores.pgvector import PGVector
 from langchain_huggingface import HuggingFaceEmbeddings

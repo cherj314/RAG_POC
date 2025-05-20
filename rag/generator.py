@@ -1,6 +1,5 @@
-import os, re, requests, time
+import os, re, requests, openai
 from dotenv import load_dotenv
-import openai
 
 # Load environment variables
 load_dotenv()

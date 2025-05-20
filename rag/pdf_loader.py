@@ -1,6 +1,5 @@
-import os, re
-import fitz  # type: ignore # PyMuPDF
-from typing import List, Dict, Any
+import os, re, fitz  # type: ignore
+from typing import List
 from langchain.docstore.document import Document
 
 class PDFLoader:
